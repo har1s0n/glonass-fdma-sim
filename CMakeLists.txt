@@ -9,7 +9,9 @@ add_library(glonass_fdma_core STATIC
     src/ranging_code.cpp
     src/code_phase.cpp
     src/nav_message.cpp
-    include/glonass/nav_message.h)
+    include/glonass/nav_message.h
+    include/glonass/carrier_nco.h
+    src/carrier_nco.cpp)
 
 target_include_directories(glonass_fdma_core PUBLIC include)
 target_compile_features(glonass_fdma_core PUBLIC cxx_std_20)
