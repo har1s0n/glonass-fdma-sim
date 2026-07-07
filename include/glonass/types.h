@@ -12,4 +12,5 @@ constexpr int codeLength           = 511;    // N
 constexpr std::int64_t codeRate    = 511000; // R_c, симв/с
 constexpr std::int64_t messageRate = 100;    // R_m, симв/с
 constexpr int phaseBits            = 32;     // B
+constexpr int timeMarkLength       = 30;     // длина ПСПМВ (укороч. M-послед. 31->30), [ИКД] 3.3.2.2
 } // namespace glonass

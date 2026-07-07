@@ -6,8 +6,8 @@
 namespace glonass {
 void CodePhase::init(SampleIndex globalStartSample, std::int64_t sampleRate, double codePhaseInit) {
    assert(sampleRate        > 0);
-   assert(globalStartSample >= 0);  // граница v1: n0 >= 0
-   assert(codePhaseInit    >= 0.0); // граница v1: phi_{c0,k} >= 0
+   assert(globalStartSample >= 0);  // n0 >= 0
+   assert(codePhaseInit    >= 0.0); // phi_{c0,k} >= 0
 
    sampleRate_       = sampleRate;
    codePhaseModulus_ = static_cast<std::uint64_t> (codeLength)
@@ -15,7 +15,7 @@ void CodePhase::init(SampleIndex globalStartSample, std::int64_t sampleRate, dou
 
    // round(phi_{c0,k} * Fs) — half-away-from-zero, совпадает с «round» Ч3 (согл. п.2)
    const std::int64_t initTerm =
-      std::llround(codePhaseInit * static_cast<double> (sampleRate)); // >= 0 в v1
+      std::llround(codePhaseInit * static_cast<double> (sampleRate));
    // член привязки: n0 * R_c mod (N*Fs) без переполнения (А.4(2))
    const std::uint64_t anchorTerm =
       mulMod(static_cast<std::uint64_t> (globalStartSample),
