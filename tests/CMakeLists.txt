@@ -24,6 +24,8 @@ glonass_add_gtest(test_ranging_code SRCS test_ranging_code.cpp)
 glonass_add_gtest(test_nav_message SRCS test_nav_message.cpp)
 glonass_add_gtest(test_carrier_nco SRCS test_carrier_nco.cpp)
 glonass_add_gtest(test_modulation SRCS test_modulation.cpp)
+glonass_add_gtest(test_signal_source SRCS test_signal_source.cpp)
+glonass_add_gtest(test_iq_export SRCS test_iq_export.cpp)
 
 
 target_compile_definitions(test_ranging_code PRIVATE
