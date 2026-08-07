@@ -31,3 +31,25 @@
 *.exe
 *.out
 *.app
+
+# Сборка (out-of-source; каталог задаётся ключом -B)
+/build/
+build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+/Testing/
+
+# Qt Creator — пользовательские настройки проекта
+CMakeLists.txt.user*
+
+# Документы: Ч3, схемы, ИКД, теоретический базис — ведутся вне репозитория
+/docs/
+
+# Claude Code — локальная оснастка, в удалённый репозиторий не выносится
+/CLAUDE.md
+/.claude/
+/.claude.json
+/.mcp.json
