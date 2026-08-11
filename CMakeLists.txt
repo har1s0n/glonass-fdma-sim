@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Статическая библиотека ядра
 add_library(glonass_fdma_core STATIC
     include/glonass/nav_message.h
+    include/glonass/nav_message_l1oc.h
     include/glonass/carrier_nco.h
     include/glonass/modulation.h
     include/glonass/signal_combine.h
@@ -22,6 +23,7 @@ add_library(glonass_fdma_core STATIC
     src/ranging_code_l1oc.cpp
     src/code_phase.cpp
     src/nav_message.cpp
+    src/nav_message_l1oc.cpp
     src/carrier_nco.cpp
     src/signal_source.cpp)
 

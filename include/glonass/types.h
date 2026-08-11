@@ -20,4 +20,9 @@ constexpr int codeLengthD           = 1023;            // N_d (поз.29; [ИК�
 constexpr int codeLengthP           = 4092;            // N_p (поз.30; [ИКД-L1OC] 2.2.2)
 constexpr int multiplexPeriod       = 2 * codeLengthP; // M = 8184 чипов уплотнения (А_L1OC.2)
 constexpr int satelliteCount        = 64;              // j = 0…63, j = 0 резервный (поз.28)
+
+// --- Навигационное сообщение L1OC (блок Б_L1OC) ---
+constexpr std::int64_t symbolRateL1OC = 250; // R_с, симв/с; символ СК 4 мс (поз.37, 38; [ИКД-L1OC] 2.1.2, 2.3)
+constexpr int maxPayloadBitsL1OC      = 339; // максимум бит ЦИ — строка 2-го типа (поз.37; [ИКД-L1OC] табл. 4.2, 4.3, 4.5)
+constexpr int maxLineSymbolsL1OC      = 750; // максимум L_с = 2·n_с — строка 2-го типа (Б_L1OC.3)
 } // namespace glonass
