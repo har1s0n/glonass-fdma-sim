@@ -17,7 +17,9 @@ add_library(glonass_fdma_core STATIC
     include/glonass/code_phase.h
     include/glonass/iq_sink.h
     include/glonass/ranging_code.h
+    include/glonass/ranging_code_l1oc.h
     src/ranging_code.cpp
+    src/ranging_code_l1oc.cpp
     src/code_phase.cpp
     src/nav_message.cpp
     src/carrier_nco.cpp

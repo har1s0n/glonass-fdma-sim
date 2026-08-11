@@ -21,6 +21,7 @@ function(glonass_add_gtest TARGET_NAME)
 endfunction()
 
 glonass_add_gtest(test_ranging_code SRCS test_ranging_code.cpp)
+glonass_add_gtest(test_ranging_code_l1oc SRCS test_ranging_code_l1oc.cpp)
 glonass_add_gtest(test_nav_message SRCS test_nav_message.cpp)
 glonass_add_gtest(test_carrier_nco SRCS test_carrier_nco.cpp)
 glonass_add_gtest(test_modulation SRCS test_modulation.cpp)
@@ -31,4 +32,6 @@ glonass_add_gtest(test_iq_export SRCS test_iq_export.cpp)
 target_compile_definitions(test_ranging_code PRIVATE
     GLONASS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
 target_compile_definitions(test_nav_message PRIVATE
+    GLONASS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
+target_compile_definitions(test_ranging_code_l1oc PRIVATE
     GLONASS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data")

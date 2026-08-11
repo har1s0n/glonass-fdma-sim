@@ -13,4 +13,11 @@ constexpr std::int64_t codeRate    = 511000; // R_c, симв/с
 constexpr std::int64_t messageRate = 100;    // R_m, симв/с
 constexpr int phaseBits            = 32;     // B
 constexpr int timeMarkLength       = 30;     // длина ПСПМВ (укороч. M-послед. 31->30), [ИКД] 3.3.2.2
+
+// --- Параметры тракта L1OC (реестр §0.1; ИКД ГЛОНАСС L1OC ред. 1.0) ---
+constexpr std::int64_t chipRateL1OC = 1023000;         // f_T1, чип/с (поз.27; [ИКД-L1OC] 2.1.2)
+constexpr int codeLengthD           = 1023;            // N_d (поз.29; [ИКД-L1OC] 2.2.1)
+constexpr int codeLengthP           = 4092;            // N_p (поз.30; [ИКД-L1OC] 2.2.2)
+constexpr int multiplexPeriod       = 2 * codeLengthP; // M = 8184 чипов уплотнения (А_L1OC.2)
+constexpr int satelliteCount        = 64;              // j = 0…63, j = 0 резервный (поз.28)
 } // namespace glonass
