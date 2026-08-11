@@ -23,6 +23,8 @@ add_library(glonass_fdma_core STATIC
     src/carrier_nco.cpp
     src/signal_source.cpp)
 
+#
+
 target_include_directories(glonass_fdma_core PUBLIC include)
 target_compile_features(glonass_fdma_core PUBLIC cxx_std_20)
 
