@@ -10,6 +10,7 @@ add_library(glonass_fdma_core STATIC
     include/glonass/nav_message_l1oc.h
     include/glonass/carrier_nco.h
     include/glonass/modulation.h
+    include/glonass/modulation_l1oc.h
     include/glonass/signal_combine.h
     include/glonass/signal_source.h
     include/glonass/source_config.h
