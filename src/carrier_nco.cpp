@@ -24,15 +24,18 @@ void CarrierNco::init(SampleIndex  globalStartSample,
                       std::int64_t sampleRate,
                       std::int64_t carrierFreq,
                       std::int64_t referenceFreq,
-                      double       initialPhase) {
+                      double       initialPhase,
+                      std::int64_t modelBandwidth) {
    assert(globalStartSample >= 0);                                // n0 >= 0 (В.2)
    assert(sampleRate > 0);                                        // Fs > 0
 
    const std::int64_t residualFreq = carrierFreq - referenceFreq; // Δf_k (В.1), может <0
 
-   // Условие представимости (В.9, поз.22): |Δf_k| + B_model <= Fs/2, B_model = codeRate.
+   // Условие представимости (В.9, поз.22): |Δf_k| + B_model <= Fs/2. B_model — односторонняя полоса
+   // модулированного источника: сетка литер — codeRate = R_c (поз.22, умолчание); тракт L1OC —
+   // modelBandwidthL1OC = 2·f_T1 (В.2, поз.34; при Δf_j=0 отсюда Fs >= 4,092 МГц).
    // Проверка на литеру эквивалентна max_{k in K} для всей сетки. Fs/2 в целых — консервативно.
-   assert((residualFreq < 0 ? -residualFreq : residualFreq) + codeRate <= sampleRate / 2);
+   assert((residualFreq < 0 ? -residualFreq : residualFreq) + modelBandwidth <= sampleRate / 2);
 
    const std::int64_t two_B = std::int64_t{ 1 } << phaseBits; // 2^B = 2^32
 
@@ -57,8 +60,7 @@ void CarrierNco::init(SampleIndex  globalStartSample,
 std::complex<double> CarrierNco::carrier() const {
    // e_k[n] = cos(2π·Θ/2^B) + j·sin(2π·Θ/2^B) (В.4). Квадрантное свёртывание: старшие 2 бита Θ —
    // квадрант, младшие (B−2) — угол in [0,π/2). Осевые точки (Θ = q·2^(B−2)) выходят точно
-   // (±1,0)/(0,±1) с −0,0 (§7(6)/(2)); внеосевые совпадают с прямым синтезом в пределах ε_NCO.
-   // Таблицы нет, все B бит фазы используются => спуров фазового усечения нет (В.8).
+   // (±1,0)/(0,±1) с −0,0 (§7(6)/(2)); внеосевые совпадают с прямым синтезом в пределах ε_NCO
    constexpr std::uint32_t quadrantShift = phaseBits - 2;                                        // B−2 = 30
    constexpr std::uint32_t quadrantMask  = (std::uint32_t{ 1 } << quadrantShift) - 1u;
    const std::uint32_t     quadrant      = carrierPhase_ >> quadrantShift;                       // 0..3
@@ -76,7 +78,7 @@ std::complex<double> CarrierNco::carrier() const {
 }
 
 void CarrierNco::step() {
-   carrierPhase_ += phaseIncrement_; // (Θ+Δθ) mod 2^B (В.5/В.8): естественный перенос за 2^32
+   carrierPhase_ += phaseIncrement_;
 }
 
 std::uint32_t CarrierNco::phaseIncrement() const {
