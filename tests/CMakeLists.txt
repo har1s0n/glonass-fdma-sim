@@ -32,6 +32,9 @@ glonass_add_gtest(test_signal_combine_l1oc SRCS test_signal_combine_l1oc.cpp)
 glonass_add_gtest(test_signal_source SRCS test_signal_source.cpp)
 glonass_add_gtest(test_signal_source_l1oc SRCS test_signal_source_l1oc.cpp)
 glonass_add_gtest(test_iq_export SRCS test_iq_export.cpp)
+glonass_add_gtest(test_iq_convert SRCS test_iq_convert.cpp)
+# convert.h — локальный заголовок инструмента сопряжения, вне include/glonass/ (в модель не входит)
+target_include_directories(test_iq_convert PRIVATE ${CMAKE_SOURCE_DIR}/apps/iq_convert)
 
 
 target_compile_definitions(test_ranging_code PRIVATE
