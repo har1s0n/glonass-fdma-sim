@@ -2,6 +2,7 @@
 #include "glonass/nav_message_l1oc.h"
 #include "glonass/ranging_code_l1oc.h"
 #include "sha256.h"
+#include "source_l1oc.h" // сцепка А_L1OC + Б_L1OC -> Г_L1OC (SourceL1OC), общая для тестов L1OC
 
 #include <gtest/gtest.h>
 
@@ -12,63 +13,11 @@
 #include <string>
 
 using namespace glonass;
+using namespace testutil;
 
 namespace {
-constexpr std::int64_t sampleRateL1OC = 20000000;   // Fs = 20,0 МГц
-constexpr int samplesPer8ms           = 160000;     // период замыкания кодовой фазы (Г_L1OC.10)
-constexpr int samplesPer24ms          = 480000;     // 6 символов СК, 12 полусимволов ОК1 (Г_L1OC.10)
-constexpr double kEpsPhasor           = 1e-9;       // допуск координат (§ 0.4, уровень Блока В)
-
-const std::complex<double> kUnitPhasor{ 1.0, 0.0 }; // e_j при f0 = f_L1OC, phi_0 = 0 (§ 1, (1.7))
-
-// Режим контрольного примера Г_L1OC.10: ЦИ нулевая, строка нормального типа, S_j = 0.
-PayloadProviderL1OC zeroProvider() {
-   return [](std::int64_t) {
-             return LineContentL1OC{};
-   };
-}
-
-// Сцепка А_L1OC + Б_L1OC -> Г_L1OC для одного НКА (§ 2_L1OC.3): фаза 1 — съём выходов
-// блоков-источников и вычисление П_L1OC, фаза 2 — продвижение состояний к n+1.
-class SourceL1OC {
-public:
-
-   explicit SourceL1OC(int j, SampleIndex globalStartSample = 0) {
-      code_.initCodeTablesL1OC(j);
-      code_.initCodePhaseAtSampleL1OC(globalStartSample, sampleRateL1OC, 0.0);
-      message_.initMessageAtSampleL1OC(globalStartSample, sampleRateL1OC, zeroProvider());
-   }
-
-   // --- фаза 1 ---
-   Bit multiplexedBit() const { // П_L1OC,j[n] (Г_L1OC.1)-(Г_L1OC.3)
-      return multiplexL1OC(code_.codeBitD(), code_.codeBitP(), code_.meanderSymbol(),
-                           code_.componentSelect(), message_.convSymbol(), message_.overlaySymbol());
-   }
-
-   std::complex<double> sourceSample(std::complex<double> carrier   = kUnitPhasor,
-                                     double               amplitude = 1.0) const {
-      return modulateL1OC(multiplexedBit(), carrier, amplitude); // u_j[n] (Г_L1OC.5)
-   }
-
-   // --- фаза 2 ---
-   void step() {
-      code_.step();
-      message_.step();
-   }
-
-   const RangingCodeL1OC &code() const {
-      return code_;
-   }
-
-   const NavMessageL1OC &message() const {
-      return message_;
-   }
-
-private:
-
-   RangingCodeL1OC code_;
-   NavMessageL1OC message_;
-};
+constexpr int samplesPer24ms = 480000; // 6 символов СК, 12 полусимволов ОК1 (Г_L1OC.10)
+constexpr double kEpsPhasor  = 1e-9;   // допуск координат (§ 0.4, уровень Блока В)
 
 // Варианты вектора для проверки его различающей силы (Г_L1OC.10).
 struct Variant {

@@ -27,6 +27,7 @@ glonass_add_gtest(test_nav_message_l1oc SRCS test_nav_message_l1oc.cpp)
 glonass_add_gtest(test_carrier_nco SRCS test_carrier_nco.cpp)
 glonass_add_gtest(test_modulation SRCS test_modulation.cpp)
 glonass_add_gtest(test_modulation_l1oc SRCS test_modulation_l1oc.cpp)
+glonass_add_gtest(test_signal_combine_l1oc SRCS test_signal_combine_l1oc.cpp)
 glonass_add_gtest(test_signal_source SRCS test_signal_source.cpp)
 glonass_add_gtest(test_iq_export SRCS test_iq_export.cpp)
 
