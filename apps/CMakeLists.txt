@@ -4,3 +4,9 @@
 add_executable(glonass_signal_gen signal_gen/main.cpp)
 target_link_libraries(glonass_signal_gen PRIVATE glonass_fdma_core)
 target_compile_features(glonass_signal_gen PRIVATE cxx_std_20)
+
+# Тракт L1OC — отдельный модуль запуска: тракты не смешиваются (§ 2_L1OC.1), состав ключей иной
+# (--j вместо --k, --band неприменим), FDMA-модуль остаётся эталоном регрессии.
+add_executable(glonass_signal_gen_l1oc signal_gen_l1oc/main.cpp)
+target_link_libraries(glonass_signal_gen_l1oc PRIVATE glonass_fdma_core)
+target_compile_features(glonass_signal_gen_l1oc PRIVATE cxx_std_20)
