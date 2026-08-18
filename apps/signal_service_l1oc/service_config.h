@@ -9,18 +9,26 @@
 // Параметры развёртывания из переменных окружения
 // Параметры сигнала здесь не задаются: они передаются строкой запроса и разбираются отдельно.
 namespace glonass_service {
-inline constexpr const char* envPort     = "SIGNAL_PORT";
-inline constexpr const char* envMaxJobs  = "SIGNAL_MAX_JOBS";
-inline constexpr const char* envWorkDir  = "SIGNAL_WORK_DIR";
-inline constexpr const char* envTcpPorts = "SIGNAL_TCP_PORTS";
+inline constexpr const char* envPort       = "SIGNAL_PORT";
+inline constexpr const char* envMaxJobs    = "SIGNAL_MAX_JOBS";
+inline constexpr const char* envMaxStreams = "SIGNAL_MAX_STREAMS";
+inline constexpr const char* envWorkDir    = "SIGNAL_WORK_DIR";
+inline constexpr const char* envTcpPorts   = "SIGNAL_TCP_PORTS";
 
 // Адрес привязки: порты наружу не публикуются, сервис доступен только из сети комплекса,
 // поэтому привязка выполняется ко всем интерфейсам контейнера
 inline constexpr const char* bindHost = "0.0.0.0";
 
+// Предел ожидания готовности сокета к записи. Обратное давление режима Б состоит в том, что
+// заполненное окно приёма получателя блокирует запись, а с нею и генерацию; ожидание не
+// бесконечно, и по истечении предела поток обрывается. Умолчание библиотеки — 5 с, чего
+// недостаточно: пауза получателя на обработку блока рвала бы поток.
+inline constexpr int writeTimeoutSeconds = 60;
+
 struct ServiceConfig {
    int         port         = 8080;          // SIGNAL_PORT [порт интерфейса HTTP]
    int         maxJobs      = 1;             // SIGNAL_MAX_JOBS [одновременно выполняемых заданий]
+   int         maxStreams   = 1;             // SIGNAL_MAX_STREAMS [одновременно открытых потоков]
    std::string workDir      = "/tmp/signal"; // SIGNAL_WORK_DIR [временные артефакты заданий]
    int         tcpPortFirst = 30070;         // SIGNAL_TCP_PORTS [диапазон портов
    int         tcpPortLast  = 30079;         // потоковых сеансов]
@@ -102,6 +110,17 @@ inline ServiceConfig parseServiceConfig(const std::map<std::string, std::string>
       }
    }
 
+   // Поток режима Б удерживает поток пула на всё время выдачи; без предела бесконечные потоки
+   // исчерпали бы пул и служебные точки перестали бы отвечать.
+   if (valueOf(envMaxStreams, &value)) {
+      config.maxStreams = detail::parseIntStrict(*value, envMaxStreams);
+
+      if (config.maxStreams < 1) {
+         throw std::runtime_error(std::string(envMaxStreams) + ": требуется значение ≥ 1: "
+                                  + std::to_string(config.maxStreams));
+      }
+   }
+
    if (valueOf(envWorkDir, &value)) {
       if (value->empty()) {
          throw std::runtime_error(std::string(envWorkDir) + ": пустое значение");
@@ -118,7 +137,7 @@ inline ServiceConfig parseServiceConfig(const std::map<std::string, std::string>
 inline std::map<std::string, std::string> readEnvironment() {
    std::map<std::string, std::string> environment;
 
-   for (const char* name : { envPort, envMaxJobs, envWorkDir, envTcpPorts }) {
+   for (const char* name : { envPort, envMaxJobs, envMaxStreams, envWorkDir, envTcpPorts }) {
       const char* value = std::getenv(name);
 
       if (value != nullptr) {

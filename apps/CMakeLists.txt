@@ -35,9 +35,13 @@ if(GLONASS_BUILD_SERVICE)
         signal_service_l1oc/error_response.h
         signal_service_l1oc/json_writer.h
         signal_service_l1oc/state_metrics.h
-        signal_service_l1oc/state_metrics.cpp)
+        signal_service_l1oc/state_metrics.cpp
+        signal_service_l1oc/stream_session.h
+        signal_service_l1oc/stream_session.cpp)
+    # iq_convert — примитивы квантования CS16, общие с конвертером записи (решение 6)
     target_include_directories(glonass_service_l1oc PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/signal_service_l1oc)
+        ${CMAKE_CURRENT_SOURCE_DIR}/signal_service_l1oc
+        ${CMAKE_CURRENT_SOURCE_DIR}/iq_convert)
 
     target_link_libraries(glonass_service_l1oc PUBLIC cpp_httplib glonass_fdma_core
                                                       glonass_params_l1oc)

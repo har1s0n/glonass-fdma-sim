@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 #include <httplib.h>
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
@@ -68,17 +70,17 @@ TEST_F(ServiceHttp, Test2_InfoReportsServiceAndIcdProfile) {
    EXPECT_TRUE(contains(response->body, glonass_service::icdProfile));
 }
 
-// Точки режимов Б и В вводятся последующими этапами; до этого путь не обслуживается.
+// Точка режима В вводится последующим этапом; до этого путь не обслуживается.
 TEST_F(ServiceHttp, Test3_UnknownPathGivesErrorModel) {
    httplib::Client client(localHost, port_);
-   const auto response = client.Get("/v1/stream");
+   const auto response = client.Get("/v1/jobs");
 
    ASSERT_TRUE(response);
    EXPECT_EQ(response->status, 404);
    EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
    EXPECT_EQ(response->body,
              "{\"error\": \"not_found\", "
-             "\"message\": \"путь не обслуживается: /v1/stream\"}");
+             "\"message\": \"путь не обслуживается: /v1/jobs\"}");
 }
 
 // Состояние завершения: приём соединений ещё открыт, обращения получают 503.
@@ -182,4 +184,120 @@ TEST_F(ServiceHttp, Test12_StateIsPureFunction) {
    ASSERT_TRUE(second);
    EXPECT_EQ(first->status, 200);
    EXPECT_EQ(first->body, second->body);
+}
+
+// ───────────────────────── режим Б — потоковая выдача ─────────────────────────
+
+// Тело — сырые двоичные отсчёты без заголовка и разделителей; длина задаётся n (контракт § 5.2)
+TEST_F(ServiceHttp, Test13_StreamCf32DeliversRawSamples) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/v1/stream?j=1&n=1024&format=cf32");
+
+   ASSERT_TRUE(response);
+   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->get_header_value("Content-Type"), "application/octet-stream");
+   EXPECT_EQ(response->get_header_value("Transfer-Encoding"), "chunked");
+   EXPECT_EQ(response->body.size(), 1024U * 8U);
+
+   // I[0] = −1, Q[0] = +0,0 (Д_L1OC.11); порядок байтов прямой
+   EXPECT_EQ(response->body.substr(0, 8), std::string("\x00\x00\x80\xBF\x00\x00\x00\x00", 8));
+}
+
+// Умолчание формата — cs16 (решение 6): 4 байта на отсчёт
+TEST_F(ServiceHttp, Test14_StreamDefaultsToCs16) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/v1/stream?j=1&n=1024");
+
+   ASSERT_TRUE(response);
+   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->body.size(), 1024U * 4U);
+}
+
+// Разбиение на блоки на содержание потока не влияет
+TEST_F(ServiceHttp, Test15_StreamContentIndependentOfBlockSamples) {
+   httplib::Client client(localHost, port_);
+   const auto small = client.Get("/v1/stream?j=1&n=5000&format=cf32&blockSamples=64");
+   const auto large = client.Get("/v1/stream?j=1&n=5000&format=cf32&blockSamples=65536");
+
+   ASSERT_TRUE(small);
+   ASSERT_TRUE(large);
+   EXPECT_EQ(small->status, 200);
+   EXPECT_EQ(small->body, large->body);
+}
+
+// Нарушение В.2 отклоняется ДО начала выдачи: код 422 и тело модели ошибок, а не обрезанный
+// поток отсчётов (в отличие от режима А, где признак выводится полем при коде 200).
+TEST_F(ServiceHttp, Test16_StreamRejectsNonRepresentableBeforeOutput) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/v1/stream?j=1&n=1024&fs=4091999");
+
+   ASSERT_TRUE(response);
+   EXPECT_EQ(response->status, 422);
+   EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
+   EXPECT_TRUE(contains(response->body, "\"error\": \"unprocessable\""));
+   EXPECT_TRUE(contains(response->body, "\"field\": \"fs\""));
+   EXPECT_TRUE(contains(response->body, "В.2"));
+}
+
+TEST_F(ServiceHttp, Test17_StreamBadValueGives400) {
+   httplib::Client client(localHost, port_);
+
+   for (const char* target : { "/v1/stream?j=1&n=0",
+                               "/v1/stream?j=1&n=8&blockSamples=1048577",
+                               "/v1/stream?j=1&n=8&format=int8" }) {
+      const auto response = client.Get(target);
+
+      ASSERT_TRUE(response) << target;
+      EXPECT_EQ(response->status, 400) << target;
+      EXPECT_TRUE(contains(response->body, "\"error\": \"bad_request\"")) << target;
+   }
+}
+
+// Поток удерживает поток пула на всё время выдачи; сверх предела SIGNAL_MAX_STREAMS обращение
+// отклоняется кодом 503, служебные точки при этом продолжают отвечать.
+TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
+   ASSERT_EQ(service_->config().maxStreams, 1);
+   std::atomic<bool> streaming{ false };
+   std::atomic<bool> release{ false };
+
+   std::thread holder([this, &streaming, &release] {
+         httplib::Client client(localHost, port_);
+
+         client.set_read_timeout(10, 0);
+
+         // Поток без предела: n и seconds не заданы (§ 5.2)
+         client.Get("/v1/stream?j=1&blockSamples=256",
+                    [&streaming, &release](const char*, std::size_t) {
+               streaming.store(true);
+               return !release.load(); // приём прекращается по сигналу — обрыв получателем
+            });
+      });
+
+   for (int attempt = 0; (attempt < 2000) && !streaming.load(); ++attempt) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+   }
+   EXPECT_TRUE(streaming.load());
+
+   httplib::Client client(localHost, port_);
+   const auto rejected = client.Get("/v1/stream?j=1&n=8");
+
+   ASSERT_TRUE(rejected);
+   EXPECT_EQ(rejected->status, 503);
+   EXPECT_TRUE(contains(rejected->body, "\"error\": \"unavailable\""));
+
+   // Пул не исчерпан: служебная точка отвечает во время потока
+   const auto health = client.Get("/healthz");
+
+   ASSERT_TRUE(health);
+   EXPECT_EQ(health->status, 200);
+
+   release.store(true);
+   holder.join();
+
+   // Место освобождено разрушением ответа: следующий поток принимается
+   const auto accepted = client.Get("/v1/stream?j=1&n=8&format=cf32");
+
+   ASSERT_TRUE(accepted);
+   EXPECT_EQ(accepted->status, 200);
+   EXPECT_EQ(accepted->body.size(), 8U * 8U);
 }

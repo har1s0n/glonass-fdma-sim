@@ -4,19 +4,55 @@
 #include <ctime>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 
 #include "error_response.h"
 #include "json_writer.h"
 #include "service_version.h"
 #include "state_metrics.h"
+#include "stream_session.h"
 
 namespace glonass_service {
 namespace {
-constexpr const char* contentTypeJson = "application/json; charset=utf-8";
+constexpr const char* contentTypeJson        = "application/json; charset=utf-8";
+constexpr const char* contentTypeOctetStream = "application/octet-stream";
 
 thread_local std::uint64_t threadRequestId = 0;
+
+// Место в пределе одновременно открытых потоков режима Б. Занимается на время жизни объекта;
+// объект живёт в замыкании поставщика содержимого и разрушается вместе с ответом — в том числе
+// при обрыве соединения получателем.
+class StreamSlot {
+public:
+
+   StreamSlot(std::atomic<int>& counter, int limit)
+      : counter_(counter), acquired_(counter.fetch_add(1) < limit) {
+      if (!acquired_) {
+         counter_.fetch_sub(1);
+      }
+   }
+
+   StreamSlot(const StreamSlot&)            = delete;
+   StreamSlot &operator=(const StreamSlot&) = delete;
+
+   ~StreamSlot() {
+      if (acquired_) {
+         counter_.fetch_sub(1);
+      }
+   }
+
+   bool acquired() const noexcept {
+      return acquired_;
+   }
+
+private:
+
+   std::atomic<int>& counter_;
+   bool acquired_;
+};
 
 // Отметка времени UTC
 std::string timestampUtc() {
@@ -60,6 +96,8 @@ void logLine(const std::string& level, std::uint64_t requestId, const std::strin
 
 Service::Service(const ServiceConfig& config)
    : config_(config) {
+   // Ожидание готовности сокета к записи — предел обратного давления режима Б (service_config.h)
+   server_.set_write_timeout(writeTimeoutSeconds, 0);
    registerHandlers();
    registerRoutes();
 }
@@ -138,6 +176,49 @@ void Service::registerRoutes() {
             const StateRequest parsed = parseStateRequest(request);
 
             response.set_content(stateMetricsJson(computeStateMetrics(parsed)), contentTypeJson);
+         } catch (const glonass_params::ParamError& error) {
+            respondWithError(response, fromParamError(error));
+         }
+      });
+
+   // Режим Б — потоковая выдача отсчётов
+   server_.Get("/v1/stream", [this](const httplib::Request& request, httplib::Response& response) {
+         try {
+            const StreamRequest parsed = parseStreamRequest(request);
+            auto slot                  = std::make_shared<StreamSlot> (activeStreams_, config_.maxStreams);
+
+            if (!slot->acquired()) {
+               respondWithError(response,
+                                unavailable("предел одновременно открытых потоков исчерпан: "
+                                            + std::to_string(config_.maxStreams)));
+               return;
+            }
+            auto session                  = std::make_shared<StreamSession> (parsed);
+            const std::uint64_t requestId = currentRequestId();
+
+            response.set_chunked_content_provider(
+               contentTypeOctetStream,
+               [session](std::size_t /*offset*/, httplib::DataSink& sink) {
+               const std::span<const unsigned char> block = session->nextBlock();
+
+               if (block.empty()) { // заданная длительность выдана полностью
+                  sink.done();
+                  return true;
+               }
+
+               // Запись блокирует выдачу, пока получатель не освободит окно приёма: темп
+               // задаётся самым медленным звеном штатным управлением потоком TCP.
+               return sink.write(reinterpret_cast<const char*> (block.data()), block.size());
+            },
+
+               // Освобождающий вызов деструктора ответа: сессия и место в пределе живут ровно
+               // до конца потока — при исчерпании длительности, обрыве и останове сервиса.
+               [session, slot, requestId](bool success) {
+               logLine(success ? "INFO" : "WARN", requestId,
+                       "поток завершён: отсчётов "
+                       + std::to_string(session->samplesEmitted())
+                       + (success ? "" : "; выдача прервана"));
+            });
          } catch (const glonass_params::ParamError& error) {
             respondWithError(response, fromParamError(error));
          }

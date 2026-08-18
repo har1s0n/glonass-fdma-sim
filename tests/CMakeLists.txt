@@ -50,6 +50,8 @@ if(TARGET glonass_service_l1oc)
                       LIBS glonass_service_l1oc)
     glonass_add_gtest(test_state_metrics_l1oc SRCS test_state_metrics_l1oc.cpp
                       LIBS glonass_service_l1oc)
+    glonass_add_gtest(test_stream_l1oc SRCS test_stream_l1oc.cpp
+                      LIBS glonass_service_l1oc)
 endif()
 
 

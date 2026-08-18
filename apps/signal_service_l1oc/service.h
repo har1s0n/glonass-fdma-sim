@@ -43,6 +43,9 @@ private:
    httplib::Server server_;
    std::atomic<bool> shuttingDown_{ false };
    std::atomic<std::uint64_t> requestCounter_{ 0 };
+
+   // Открытые потоки режима Б; предел — config_.maxStreams (см. StreamSlot в service.cpp)
+   std::atomic<int> activeStreams_{ 0 };
 };
 
 // Режим --healthcheck исполняемого файла: обращение к собственной точке /healthz.
