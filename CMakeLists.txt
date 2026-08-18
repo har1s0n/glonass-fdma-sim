@@ -37,6 +37,10 @@ target_include_directories(glonass_fdma_core PUBLIC include)
 target_compile_features(glonass_fdma_core PUBLIC cxx_std_20)
 
 option(GLONASS_BUILD_APPS "Собирать исполняемые модули (apps/)" ON)
+
+# Микросервис L1OC. Зависимость cpp-httplib включена в состав репозитория (third_party/):
+# обращения к сети при сборке нет.
+option(GLONASS_BUILD_SERVICE "Собирать микросервис L1OC (apps/signal_service_l1oc)" ON)
 if(GLONASS_BUILD_APPS)
    add_subdirectory(apps)
 endif()
