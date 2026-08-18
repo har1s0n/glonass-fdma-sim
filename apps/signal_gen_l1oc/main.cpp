@@ -1,4 +1,5 @@
-// apps/signal_gen_l1oc/main.cpp — модуль запуска генерации сигнала тракта L1OC
+#include "request_params_l1oc.h"
+
 #include "glonass/iq_sink.h"
 #include "glonass/signal_source_l1oc.h"
 #include "glonass/source_config_l1oc.h"
@@ -8,7 +9,6 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -19,80 +19,6 @@ glonass::PayloadProviderL1OC zeroPayloadProviderL1OC() {
    return [](std::int64_t /*lineIndex*/) {
              return glonass::LineContentL1OC{}; // lineType = normal, ЦИ = 0 (value-init)
    };
-}
-
-std::vector<std::string> split(const std::string& s, char sep) {
-   std::vector<std::string> out;
-   std::string item;
-   std::istringstream iss(s);
-
-   while (std::getline(iss, item, sep)) {
-      out.push_back(item);
-   }
-   return out;
-}
-
-// --j : "a:b" (диапазон) либо "a,b,c" (список). j ∈ {1,…,63}: j = 0 резервный (поз.28).
-std::vector<int> parseSatellites(const std::string& s) {
-   std::vector<int> j;
-
-   if (s.find(':') != std::string::npos) {
-      const auto parts = split(s, ':');
-
-      if (parts.size() != 2) {
-         throw std::runtime_error("--j диапазон: ожидается a:b");
-      }
-      const int a = std::stoi(parts[0]);
-      const int b = std::stoi(parts[1]);
-
-      if (a > b) {
-         throw std::runtime_error("--j: a > b");
-      }
-
-      for (int v = a; v <= b; ++v) {
-         j.push_back(v);
-      }
-   } else {
-      for (const auto& p : split(s, ',')) {
-         j.push_back(std::stoi(p));
-      }
-   }
-
-   if (j.empty()) {
-      throw std::runtime_error("--j: пустой набор");
-   }
-
-   for (int v : j) {
-      if ((v < 1) || (v >= glonass::satelliteCount)) {
-         throw std::runtime_error("--j: системный номер вне {1,…,63} (j = 0 резервный): "
-                                  + std::to_string(v));
-      }
-   }
-   std::vector<int> sorted = j; // повтор j недопустим: J — множество (Д_L1OC.2)
-   std::sort(sorted.begin(), sorted.end());
-
-   if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
-      throw std::runtime_error("--j: повторяющийся системный номер");
-   }
-   return j;
-}
-
-// --amp / --phi0 : скаляр (на все НКА) либо список по |J|.
-std::vector<double> parsePerSatellite(const std::string& s, std::size_t count, const char* key) {
-   std::vector<double> v;
-
-   for (const auto& p : split(s, ',')) {
-      v.push_back(std::stod(p));
-   }
-
-   if (v.size() == 1) {
-      return std::vector<double> (count, v[0]);
-   }
-
-   if (v.size() != count) {
-      throw std::runtime_error(std::string(key) + ": число значений != |J|");
-   }
-   return v;
 }
 } // namespace
 
@@ -121,11 +47,11 @@ int main(int argc, char** argv) try {
                   };
 
       if      (key == "--fs") {
-         fs = std::stoll(next("--fs"));
+         fs = glonass_params::parseInteger(next("--fs"), "--fs");
       } else if (key == "--f0") {
-         f0 = std::stoll(next("--f0"));
+         f0 = glonass_params::parseInteger(next("--f0"), "--f0");
       } else if (key == "--n0") {
-         n0 = std::stoll(next("--n0"));
+         n0 = glonass_params::parseInteger(next("--n0"), "--n0");
       } else if (key == "--j") {
          js = next("--j");
       } else if (key == "--amp") {
@@ -133,9 +59,9 @@ int main(int argc, char** argv) try {
       } else if (key == "--phi0") {
          phases = next("--phi0");
       } else if (key == "--n") {
-         nSamples = std::stoll(next("--n")); nGiven = true;
+         nSamples = glonass_params::parseInteger(next("--n"), "--n"); nGiven = true;
       } else if (key == "--seconds") {
-         seconds = std::stod(next("--seconds")); secondsGiven = true;
+         seconds = glonass_params::parseReal(next("--seconds"), "--seconds"); secondsGiven = true;
       } else if (key == "--out") {
          outPath = next("--out");
       } else if (key == "--sidecar") {
@@ -150,27 +76,19 @@ int main(int argc, char** argv) try {
       } else { throw std::runtime_error("неизвестный аргумент: " + key); }
    }
 
-   if (fs <= 0) {
-      throw std::runtime_error("--fs должно быть > 0");
-   }
+   glonass_params::requireSampleRate(fs, "--fs");
 
    // Условие представимости (В.2, поз.34): |Δf_j| + B_model ≤ Fs/2; при f₀ = f_L1OC ⇒ Fs ≥ 4,092 МГц.
-   const std::int64_t residualFreq = glonass::carrierFreqL1OC - f0;
+   glonass_params::requireRepresentable(fs, f0, "--fs");
+   glonass_params::requireSymbolRate(fs, "--fs");
+   glonass_params::requireStartSample(n0, "--n0");
+   const std::vector<int> J     = glonass_params::parseSatellites(js, "--j");
+   const std::vector<double> A  = glonass_params::parsePerSatellite(amps,   J.size(), "--amp");
+   const std::vector<double> Ph = glonass_params::parsePerSatellite(phases, J.size(), "--phi0");
 
-   if (std::llabs(residualFreq) + glonass::modelBandwidthL1OC > fs / 2) {
-      throw std::runtime_error("нарушено условие представимости В.2: |Δf| + B_model > Fs/2");
-   }
-
-   if (fs < glonass::symbolRateL1OC) {
-      throw std::runtime_error("нарушено предусловие Б_L1OC.8: Fs < R_с");
-   }
-
-   if (n0 < 0) {
-      throw std::runtime_error("--n0 должно быть ≥ 0");
-   }
-   const std::vector<int> J     = parseSatellites(js);
-   const std::vector<double> A  = parsePerSatellite(amps,   J.size(), "--amp");
-   const std::vector<double> Ph = parsePerSatellite(phases, J.size(), "--phi0");
+   // A_j ≥ 0 (поз.24) и Σ A_j² > 0 (предусловие Д_L1OC.1): прежде опирались на assert ядра,
+   // отключаемый в сборке Release.
+   glonass_params::requireAmplitudes(A, "--amp");
 
    // Длительность: --n (приоритет) либо --seconds → отсчёты.
    if (secondsGiven && !nGiven) {

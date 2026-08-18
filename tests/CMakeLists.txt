@@ -14,7 +14,7 @@ function(glonass_add_gtest TARGET_NAME)
     cmake_parse_arguments(T "" "" "SRCS;LIBS" ${ARGN})
     add_executable(${TARGET_NAME} ${T_SRCS})
     target_link_libraries(${TARGET_NAME} PRIVATE
-        GTest::gtest GTest::gtest_main glonass_fdma_core ${T_LIBS})
+        ${T_LIBS} GTest::gtest_main glonass_fdma_core)
     target_compile_features(${TARGET_NAME} PRIVATE cxx_std_20)
     include(GoogleTest)
     gtest_discover_tests(${TARGET_NAME})
@@ -36,11 +36,19 @@ glonass_add_gtest(test_iq_convert SRCS test_iq_convert.cpp)
 
 target_include_directories(test_iq_convert PRIVATE ${CMAKE_SOURCE_DIR}/apps/iq_convert)
 
+# Общий разбор параметров прогона L1OC. Цель существует только при GLONASS_BUILD_APPS=ON.
+if(TARGET glonass_params_l1oc)
+    glonass_add_gtest(test_request_params_l1oc SRCS test_request_params_l1oc.cpp
+                      LIBS glonass_params_l1oc)
+endif()
+
 # Каркас микросервиса L1OC. Цель существует только при GLONASS_BUILD_SERVICE=ON;
 # каталоги включения приходят от glonass_service_l1oc.
 if(TARGET glonass_service_l1oc)
     glonass_add_gtest(test_service_l1oc SRCS test_service_l1oc.cpp LIBS glonass_service_l1oc)
     glonass_add_gtest(test_service_l1oc_http SRCS test_service_l1oc_http.cpp
+                      LIBS glonass_service_l1oc)
+    glonass_add_gtest(test_state_metrics_l1oc SRCS test_state_metrics_l1oc.cpp
                       LIBS glonass_service_l1oc)
 endif()
 

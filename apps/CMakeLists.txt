@@ -3,10 +3,15 @@ add_executable(glonass_signal_gen signal_gen/main.cpp)
 target_link_libraries(glonass_signal_gen PRIVATE glonass_fdma_core)
 target_compile_features(glonass_signal_gen PRIVATE cxx_std_20)
 
+add_library(glonass_params_l1oc INTERFACE)
+target_include_directories(glonass_params_l1oc INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    $<TARGET_PROPERTY:glonass_fdma_core,INTERFACE_INCLUDE_DIRECTORIES>)
+
 # Тракт L1OC отдельный модуль запуска: тракты не смешиваются, состав ключей иной
 # (--j вместо --k, --band неприменим)
 add_executable(glonass_signal_gen_l1oc signal_gen_l1oc/main.cpp)
-target_link_libraries(glonass_signal_gen_l1oc PRIVATE glonass_fdma_core)
+target_link_libraries(glonass_signal_gen_l1oc PRIVATE glonass_fdma_core glonass_params_l1oc)
 target_compile_features(glonass_signal_gen_l1oc PRIVATE cxx_std_20)
 
 # Сопряжение с внешним программным приёмником: CF32 LE -> CS16 LE
@@ -28,10 +33,14 @@ if(GLONASS_BUILD_SERVICE)
         signal_service_l1oc/service_config.h
         signal_service_l1oc/service_version.h
         signal_service_l1oc/error_response.h
-        signal_service_l1oc/json_writer.h)
+        signal_service_l1oc/json_writer.h
+        signal_service_l1oc/state_metrics.h
+        signal_service_l1oc/state_metrics.cpp)
     target_include_directories(glonass_service_l1oc PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/signal_service_l1oc)
-    target_link_libraries(glonass_service_l1oc PUBLIC cpp_httplib)
+
+    target_link_libraries(glonass_service_l1oc PUBLIC cpp_httplib glonass_fdma_core
+                                                      glonass_params_l1oc)
     target_compile_features(glonass_service_l1oc PUBLIC cxx_std_20)
 
     add_executable(glonass_signal_service_l1oc signal_service_l1oc/main.cpp)

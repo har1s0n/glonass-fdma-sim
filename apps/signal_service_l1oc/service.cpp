@@ -10,13 +10,12 @@
 #include "error_response.h"
 #include "json_writer.h"
 #include "service_version.h"
+#include "state_metrics.h"
 
 namespace glonass_service {
 namespace {
-constexpr const char* contentTypeJson = "application/json";
+constexpr const char* contentTypeJson = "application/json; charset=utf-8";
 
-// Идентификатор запроса ведётся на поток: соединение обслуживается одним потоком пула,
-// поэтому значение доступно и обработчику, и записи в журнал.
 thread_local std::uint64_t threadRequestId = 0;
 
 // Отметка времени UTC
@@ -35,6 +34,15 @@ std::string timestampUtc() {
 void respondWithError(httplib::Response& response, const ErrorResponse& error) {
    response.status = error.status;
    response.set_content(error.body(), contentTypeJson);
+}
+
+// Разряд отказа разбора параметров → код состояния HTTP: badValue — значение не разбирается
+// либо вне допустимого диапазона (400); unrealizable — значения формально корректны,
+// конфигурация нереализуема (422).
+ErrorResponse fromParamError(const glonass_params::ParamError& error) {
+   return (error.kind() == glonass_params::RejectKind::badValue)
+          ? badRequest(error.field(), error.what())
+          : unprocessable(error.field(), error.what());
 }
 } // namespace
 
@@ -121,6 +129,18 @@ void Service::registerRoutes() {
          json.addString("band",       band);
          json.addString("icdProfile", icdProfile);
          response.set_content(json.str(), contentTypeJson);
+      });
+
+   // Режим А — показатели состояния. Ядро модели не запускается:
+   // показатели выводятся аналитически из конфигурации и модельного времени
+   server_.Get("/v1/state", [](const httplib::Request& request, httplib::Response& response) {
+         try {
+            const StateRequest parsed = parseStateRequest(request);
+
+            response.set_content(stateMetricsJson(computeStateMetrics(parsed)), contentTypeJson);
+         } catch (const glonass_params::ParamError& error) {
+            respondWithError(response, fromParamError(error));
+         }
       });
 }
 
