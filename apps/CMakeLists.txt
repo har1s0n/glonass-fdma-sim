@@ -37,7 +37,15 @@ if(GLONASS_BUILD_SERVICE)
         signal_service_l1oc/state_metrics.h
         signal_service_l1oc/state_metrics.cpp
         signal_service_l1oc/stream_session.h
-        signal_service_l1oc/stream_session.cpp)
+        signal_service_l1oc/stream_session.cpp
+        signal_service_l1oc/stream_slot.h
+        signal_service_l1oc/fft_radix2.h
+        signal_service_l1oc/svg_canvas.h
+        signal_service_l1oc/svg_canvas.cpp
+        signal_service_l1oc/frame_psd.h
+        signal_service_l1oc/frame_psd.cpp
+        signal_service_l1oc/tcp_stream_session.h
+        signal_service_l1oc/tcp_stream_session.cpp)
     # iq_convert — примитивы квантования CS16, общие с конвертером записи (решение 6)
     target_include_directories(glonass_service_l1oc PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/signal_service_l1oc

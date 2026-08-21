@@ -52,6 +52,10 @@ if(TARGET glonass_service_l1oc)
                       LIBS glonass_service_l1oc)
     glonass_add_gtest(test_stream_l1oc SRCS test_stream_l1oc.cpp
                       LIBS glonass_service_l1oc)
+    glonass_add_gtest(test_tcp_stream_l1oc SRCS test_tcp_stream_l1oc.cpp
+                      LIBS glonass_service_l1oc)
+    glonass_add_gtest(test_frames_l1oc SRCS test_frames_l1oc.cpp
+                      LIBS glonass_service_l1oc)
 endif()
 
 

@@ -10,49 +10,20 @@
 #include <string>
 
 #include "error_response.h"
+#include "frame_psd.h"
 #include "json_writer.h"
 #include "service_version.h"
 #include "state_metrics.h"
 #include "stream_session.h"
+#include "stream_slot.h"
 
 namespace glonass_service {
 namespace {
 constexpr const char* contentTypeJson        = "application/json; charset=utf-8";
 constexpr const char* contentTypeOctetStream = "application/octet-stream";
+constexpr const char* contentTypeSvg         = "image/svg+xml; charset=utf-8";
 
 thread_local std::uint64_t threadRequestId = 0;
-
-// Место в пределе одновременно открытых потоков режима Б. Занимается на время жизни объекта;
-// объект живёт в замыкании поставщика содержимого и разрушается вместе с ответом — в том числе
-// при обрыве соединения получателем.
-class StreamSlot {
-public:
-
-   StreamSlot(std::atomic<int>& counter, int limit)
-      : counter_(counter), acquired_(counter.fetch_add(1) < limit) {
-      if (!acquired_) {
-         counter_.fetch_sub(1);
-      }
-   }
-
-   StreamSlot(const StreamSlot&)            = delete;
-   StreamSlot &operator=(const StreamSlot&) = delete;
-
-   ~StreamSlot() {
-      if (acquired_) {
-         counter_.fetch_sub(1);
-      }
-   }
-
-   bool acquired() const noexcept {
-      return acquired_;
-   }
-
-private:
-
-   std::atomic<int>& counter_;
-   bool acquired_;
-};
 
 // Отметка времени UTC
 std::string timestampUtc() {
@@ -95,8 +66,9 @@ void logLine(const std::string& level, std::uint64_t requestId, const std::strin
 }
 
 Service::Service(const ServiceConfig& config)
-   : config_(config) {
-   // Ожидание готовности сокета к записи — предел обратного давления режима Б (service_config.h)
+   : config_(config),
+   streamRegistry_(activeStreams_, config_.maxStreams, config_.tcpPortFirst,
+                   config_.tcpPortLast, config_.tcpAcceptTimeout) {
    server_.set_write_timeout(writeTimeoutSeconds, 0);
    registerHandlers();
    registerRoutes();
@@ -223,6 +195,91 @@ void Service::registerRoutes() {
             respondWithError(response, fromParamError(error));
          }
       });
+
+   // Режим Б — открытие потокового сеанса по сырому TCP. Слушающий сокет занимает порт
+   // диапазона здесь; прогон начинается при подключении получателя и ведётся своим потоком.
+   server_.Post("/v1/stream/tcp",
+                [this](const httplib::Request& request, httplib::Response& response) {
+         try {
+            const StreamRequest parsed  = parseStreamRequest(request);
+            const TcpOpenResult session = streamRegistry_.open(parsed, currentRequestId());
+
+            if (session.status == TcpOpenStatus::limitReached) {
+               respondWithError(response,
+                                unavailable("предел одновременно открытых потоков исчерпан: "
+                                            + std::to_string(config_.maxStreams)));
+               return;
+            }
+
+            if (session.status == TcpOpenStatus::noFreePort) {
+               respondWithError(response,
+                                unavailable("свободный порт в диапазоне "
+                                            + std::to_string(config_.tcpPortFirst) + "-"
+                                            + std::to_string(config_.tcpPortLast)
+                                            + " отсутствует"));
+               return;
+            }
+            JsonObject json;
+
+            json.addString("sessionId", session.sessionId);
+            json.addInt("port", session.port);
+            json.addString("format", formatName(parsed.format));
+            json.addInt("blockSamples", parsed.blockSamples);
+            response.status = 201; // создан ресурс сеанса; адрес закрытия — в Location
+            response.set_header("Location", "/v1/stream/tcp/" + session.sessionId);
+            response.set_content(json.str(), contentTypeJson);
+         } catch (const glonass_params::ParamError& error) {
+            respondWithError(response, fromParamError(error));
+         }
+      });
+
+   // Кадры: числовые ряды в JSON и тот же кадр изображением.
+   // Суффикс .svg в идентификаторе кадра выбирает представление
+   server_.Get("/v1/frames/:kind",
+               [](const httplib::Request& request, httplib::Response& response) {
+         std::string kind      = request.path_params.at("kind");
+         const std::string svg = ".svg";
+         const bool asImage    = (kind.size() > svg.size())
+                                 && (kind.compare(kind.size() - svg.size(), svg.size(), svg) == 0);
+
+         if (asImage) {
+            kind.erase(kind.size() - svg.size());
+         }
+
+         if (kind != "psd") {
+            respondWithError(response, notFound("кадр не обслуживается: " + kind));
+            return;
+         }
+
+         try {
+            const StreamRequest parsed = parseStreamRequest(request);
+            const PsdFrame frame       = computePsdFrame(parsed);
+
+            if (asImage) {
+               response.set_content(psdFrameSvg(frame, parsed), contentTypeSvg);
+            } else {
+               response.set_content(psdFrameJson(frame, parsed), contentTypeJson);
+            }
+         } catch (const glonass_params::ParamError& error) {
+            respondWithError(response, fromParamError(error));
+         }
+      });
+
+   // Закрытие сеанса: выдача обрывается немедленно, ответ не дожидается завершения потока
+   server_.Delete("/v1/stream/tcp/:sessionId",
+                  [this](const httplib::Request& request, httplib::Response& response) {
+         const std::string sessionId = request.path_params.at("sessionId");
+
+         if (!streamRegistry_.close(sessionId)) {
+            respondWithError(response, notFound("сеанс неизвестен: " + sessionId));
+            return;
+         }
+         JsonObject json;
+
+         json.addString("sessionId", sessionId);
+         json.addString("status",    "closed");
+         response.set_content(json.str(), contentTypeJson);
+      });
 }
 
 bool Service::bindToPort(const std::string& host, int port) {
@@ -245,6 +302,7 @@ void Service::beginShutdown() {
 
 void Service::stop() {
    server_.stop();
+   streamRegistry_.closeAll(); // иначе потоки сеансов пережили бы останов сервиса
 }
 
 bool Service::isRunning() const {

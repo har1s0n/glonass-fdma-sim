@@ -7,6 +7,7 @@
 
 #include "httplib.h"
 #include "service_config.h"
+#include "tcp_stream_session.h"
 
 // каркас микросервиса цифровой модели сигнала L1OC
 
@@ -44,8 +45,13 @@ private:
    std::atomic<bool> shuttingDown_{ false };
    std::atomic<std::uint64_t> requestCounter_{ 0 };
 
-   // Открытые потоки режима Б; предел — config_.maxStreams (см. StreamSlot в service.cpp)
+   // Открытые потоки режима Б; предел — config_.maxStreams (см. StreamSlot в stream_slot.h).
+   // Счётчик общий для потока HTTP и потокового сеанса по сырому TCP.
    std::atomic<int> activeStreams_{ 0 };
+
+   // Потоковые сеансы по сырому TCP. Объявлен последним: разрушение сервиса прерывает
+   // сеансы и дожидается их потоков раньше, чем разрушаются счётчик и сервер.
+   TcpStreamRegistry streamRegistry_;
 };
 
 // Режим --healthcheck исполняемого файла: обращение к собственной точке /healthz.

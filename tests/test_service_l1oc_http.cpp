@@ -255,6 +255,60 @@ TEST_F(ServiceHttp, Test17_StreamBadValueGives400) {
 
 // Поток удерживает поток пула на всё время выдачи; сверх предела SIGNAL_MAX_STREAMS обращение
 // отклоняется кодом 503, служебные точки при этом продолжают отвечать.
+// ───────────────────── кадры § 5.4 — точка /v1/frames ─────────────────────
+
+// Числовые ряды кадра: те же параметры сигнала, что и в прочих режимах
+TEST_F(ServiceHttp, Test19_FramePsdGivesSeriesJson) {
+   httplib::Client client(localHost, port_);
+
+   client.set_read_timeout(30, 0); // прогон 262 144 отсчётов в сборке Debug
+   const auto response = client.Get("/v1/frames/psd?j=1:2");
+
+   ASSERT_TRUE(response);
+   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
+   EXPECT_TRUE(contains(response->body, "\"kind\": \"psd\""));
+   EXPECT_TRUE(contains(response->body, "\"points\": 1639"));
+   EXPECT_TRUE(contains(response->body, "\"avgDb\""));
+}
+
+// Тот же кадр изображением: суффикс .svg выбирает представление
+TEST_F(ServiceHttp, Test20_FramePsdGivesSvgImage) {
+   httplib::Client client(localHost, port_);
+
+   client.set_read_timeout(30, 0);
+   const auto response = client.Get("/v1/frames/psd.svg?j=1:2");
+
+   ASSERT_TRUE(response);
+   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->get_header_value("Content-Type"), "image/svg+xml; charset=utf-8");
+   EXPECT_TRUE(contains(response->body, "viewBox=\"0 0 960 540\""));
+   EXPECT_TRUE(contains(response->body, "</svg>"));
+}
+
+// Кадры набора, не введённые реализацией, дают 404 по общей модели ошибок
+TEST_F(ServiceHttp, Test21_UnknownFrameKindGivesNotFound) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/v1/frames/waveform");
+
+   ASSERT_TRUE(response);
+   EXPECT_EQ(response->status, 404);
+   EXPECT_TRUE(contains(response->body, "\"error\": \"not_found\""));
+}
+
+// Непригодная конфигурация отклоняется до прогона: кадр требует формирования отсчётов
+TEST_F(ServiceHttp, Test22_FrameRejectsBadAndUnrealizableParameters) {
+   httplib::Client client(localHost, port_);
+   const auto badValue = client.Get("/v1/frames/psd?fs=0");
+
+   ASSERT_TRUE(badValue);
+   EXPECT_EQ(badValue->status, 400);
+   const auto unrealizable = client.Get("/v1/frames/psd?fs=2000000");
+
+   ASSERT_TRUE(unrealizable);
+   EXPECT_EQ(unrealizable->status, 422);
+}
+
 TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
    ASSERT_EQ(service_->config().maxStreams, 1);
    std::atomic<bool> streaming{ false };

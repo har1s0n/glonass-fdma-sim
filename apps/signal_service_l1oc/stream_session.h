@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "glonass/signal_source_l1oc.h"
+#include "glonass/source_config_l1oc.h"
 #include "httplib.h"
 #include "request_params_l1oc.h"
 
@@ -42,12 +43,15 @@ struct StreamRequest {
    SampleFormat format       = SampleFormat::cs16;
 };
 
-StreamRequest parseStreamRequest(const httplib::Request& request);
+StreamRequest             parseStreamRequest(const httplib::Request& request);
 
-std::size_t   bytesPerSample(SampleFormat format) noexcept;
-const char*   formatName(SampleFormat format) noexcept;
+// Конфигурация источника по параметрам запроса. Общая для режима Б и кадров:
+glonass::SourceConfigL1OC sourceConfigOf(const StreamRequest& request);
 
-double        quantizationScaleCs16(const std::vector<double>& amplitudes) noexcept;
+std::size_t               bytesPerSample(SampleFormat format) noexcept;
+const char*               formatName(SampleFormat format) noexcept;
+
+double                    quantizationScaleCs16(const std::vector<double>& amplitudes) noexcept;
 
 class StreamSession {
 public:

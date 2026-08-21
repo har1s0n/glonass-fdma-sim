@@ -64,6 +64,8 @@ std::int64_t sampleCountFromSeconds(double seconds, std::int64_t sampleRate) {
    return std::llround(offset);
 }
 
+} // namespace
+
 glonass::SourceConfigL1OC sourceConfigOf(const StreamRequest& request) {
    glonass::SourceConfigL1OC config;
 
@@ -85,7 +87,6 @@ glonass::SourceConfigL1OC sourceConfigOf(const StreamRequest& request) {
    }
    return config;
 }
-} // namespace
 
 std::size_t bytesPerSample(SampleFormat format) noexcept {
    return (format == SampleFormat::cf32) ? bytesPerCf32 : bytesPerCs16;
