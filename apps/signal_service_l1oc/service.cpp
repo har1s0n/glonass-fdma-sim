@@ -10,6 +10,7 @@
 #include <string>
 
 #include "error_response.h"
+#include "frame_correlation.h"
 #include "frame_level.h"
 #include "frame_psd.h"
 #include "frame_waveform.h"
@@ -248,7 +249,8 @@ void Service::registerRoutes() {
             kind.erase(kind.size() - svg.size());
          }
 
-         if ((kind != "psd") && (kind != "waveform") && (kind != "level")) {
+         if ((kind != "psd") && (kind != "waveform") && (kind != "level")
+             && (kind != "acf") && (kind != "ccf")) {
             respondWithError(response, notFound("кадр не обслуживается: " + kind));
             return;
          }
@@ -266,6 +268,14 @@ void Service::registerRoutes() {
 
                body = asImage ? waveformFrameSvg(frame, parsed)
                               : waveformFrameJson(frame, parsed);
+            } else if (kind == "acf") {
+               const AcfFrame frame = computeAcfFrame(parsed);
+
+               body = asImage ? acfFrameSvg(frame, parsed) : acfFrameJson(frame, parsed);
+            } else if (kind == "ccf") {
+               const CcfFrame frame = computeCcfFrame(parsed);
+
+               body = asImage ? ccfFrameSvg(frame, parsed) : ccfFrameJson(frame, parsed);
             } else {
                const LevelFrame frame = computeLevelFrame(parsed);
 

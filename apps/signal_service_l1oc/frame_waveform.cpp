@@ -15,8 +15,6 @@
 
 namespace glonass_service {
 namespace {
-constexpr std::size_t compositionListLimit = 4; // до скольких НКА состав выводится перечислением
-
 // Значение, общее для всего состава; при разнобое подпись параметра не выводится
 bool commonValue(const std::vector<double>& values, double& value) {
    if (values.empty()) {
@@ -54,22 +52,6 @@ std::string zoneArray(const std::vector<WaveformZone>& zones) {
       out += zone.str();
    }
    return out + "]";
-}
-
-// номер НКА задаёт дальномерный код и вид осциллограммы, иначе мощностью множества
-std::string compositionOf(const std::vector<int>& satellites) {
-   if (satellites.size() > compositionListLimit) {
-      return "|J| = " + std::to_string(satellites.size());
-   }
-   std::string out = "J = {";
-
-   for (std::size_t i = 0; i < satellites.size(); ++i) {
-      if (i > 0) {
-         out += ", ";
-      }
-      out += std::to_string(satellites[i]);
-   }
-   return out + "}";
 }
 
 // Строка параметров прогона, общая часть шапки кадра

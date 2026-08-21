@@ -1,6 +1,7 @@
 #ifndef SERVICE_SVG_CANVAS_H
 #define SERVICE_SVG_CANVAS_H
 
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,6 +50,12 @@ std::string numberRu(double value,
                      int    digits = 0);
 
 std::string escapeXml(const std::string& text);
+
+inline constexpr std::size_t compositionListLimit = 4; // до скольких НКА состав перечисляется
+
+// Состав активных НКА в шапке кадра: до compositionListLimit — перечислением, далее мощностью
+// множества
+std::string compositionOf(const std::vector<int>& satellites);
 
 // Угол поля графика, в котором размещается легенда
 enum class LegendCorner { rightTop, rightBottom, leftTop, leftBottom };

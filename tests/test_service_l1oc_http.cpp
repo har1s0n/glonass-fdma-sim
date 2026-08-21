@@ -286,7 +286,7 @@ TEST_F(ServiceHttp, Test20_FramePsdGivesSvgImage) {
 // Кадры набора, не введённые реализацией, дают 404 по общей модели ошибок.
 TEST_F(ServiceHttp, Test21_UnknownFrameKindGivesNotFound) {
    httplib::Client client(localHost, port_);
-   const auto response = client.Get("/v1/frames/acf");
+   const auto response = client.Get("/v1/frames/navline");
 
    ASSERT_TRUE(response);
    EXPECT_EQ(response->status, 404);
@@ -304,6 +304,28 @@ TEST_F(ServiceHttp, Test22_FrameRejectsBadAndUnrealizableParameters) {
 
    ASSERT_TRUE(unrealizable);
    EXPECT_EQ(unrealizable->status, 422);
+}
+
+// Корреляционные кадры считаются по таблицам ДК: прогона источника нет. Состав из одного НКА
+// пар не образует — кадр ВКФ не определён
+TEST_F(ServiceHttp, Test23_CorrelationFramesFollowComposition) {
+   httplib::Client client(localHost, port_);
+   const auto acf = client.Get("/v1/frames/acf?j=7,9");
+
+   ASSERT_TRUE(acf);
+   EXPECT_EQ(acf->status, 200);
+   EXPECT_TRUE(contains(acf->body, "\"kind\": \"acf\""));
+   EXPECT_TRUE(contains(acf->body, "\"satellite\": 7"));
+   const auto ccf = client.Get("/v1/frames/ccf.svg?j=7,9");
+
+   ASSERT_TRUE(ccf);
+   EXPECT_EQ(ccf->status,                           200);
+   EXPECT_EQ(ccf->get_header_value("Content-Type"), "image/svg+xml; charset=utf-8");
+   const auto single = client.Get("/v1/frames/ccf?j=7");
+
+   ASSERT_TRUE(single);
+   EXPECT_EQ(single->status, 422);
+   EXPECT_TRUE(contains(single->body, "\"error\": \"unprocessable\""));
 }
 
 TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {

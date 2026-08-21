@@ -81,6 +81,21 @@ std::string escapeXml(const std::string& text) {
    return out;
 }
 
+std::string compositionOf(const std::vector<int>& satellites) {
+   if (satellites.size() > compositionListLimit) {
+      return "|J| = " + std::to_string(satellites.size());
+   }
+   std::string out = "J = {";
+
+   for (std::size_t i = 0; i < satellites.size(); ++i) {
+      if (i > 0) {
+         out += ", ";
+      }
+      out += std::to_string(satellites[i]);
+   }
+   return out + "}";
+}
+
 SvgCanvas::SvgCanvas(std::string title, std::vector<std::string> subtitles,
                      std::string xLabel, std::string yLabel, std::string description)
    : title_(std::move(title)), subtitles_(std::move(subtitles)), xLabel_(std::move(xLabel)),

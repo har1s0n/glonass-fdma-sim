@@ -1,22 +1,36 @@
 #include "fft_radix2.h"
+#include "frame_correlation.h"
 #include "frame_level.h"
 #include "frame_psd.h"
 #include "frame_waveform.h"
 #include "svg_canvas.h"
 
+#include "glonass/ranging_code_l1oc.h"
 #include "glonass/types.h"
+#include "request_params_l1oc.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
 // Кадры микросервиса L1OC — базовый слой, кадры спектральной плотности мощности,
-// осциллограммы квадратур и гистограммы мгновенных значений
+// осциллограммы квадратур, гистограммы мгновенных значений и корреляционных функций
+// дальномерных кодов
 
 namespace {
+using glonass_service::AcfFrame;
+using glonass_service::acfFrameJson;
+using glonass_service::acfFrameSvg;
+using glonass_service::CcfFrame;
+using glonass_service::ccfFrameJson;
+using glonass_service::ccfFrameSvg;
+using glonass_service::computeAcfFrame;
+using glonass_service::computeCcfFrame;
 using glonass_service::computeLevelFrame;
 using glonass_service::computePsdFrame;
 using glonass_service::computeWaveformFrame;
@@ -33,6 +47,37 @@ using glonass_service::StreamRequest;
 using glonass_service::WaveformFrame;
 using glonass_service::waveformFrameJson;
 using glonass_service::waveformFrameSvg;
+
+// Символы дальномерного кода блока А_L1OC в алфавите {+1, −1}: c -> 1 − 2c
+std::vector<int> codeSymbols(int satellite, bool pilot) {
+   glonass::RangingCodeL1OC code;
+
+   code.initCodeTablesL1OC(satellite);
+   std::vector<int> symbols;
+
+   if (pilot) {
+      for (const glonass::Bit bit : code.codeTableP()) {
+         symbols.push_back(1 - 2 * static_cast<int> (bit));
+      }
+   } else {
+      for (const glonass::Bit bit : code.codeTableD()) {
+         symbols.push_back(1 - 2 * static_cast<int> (bit));
+      }
+   }
+   return symbols;
+}
+
+// Прямое суммирование корреляции — независимая проверка счёта через XOR и popcount
+int correlationDirect(const std::vector<int>& a, const std::vector<int>& b, int tau) {
+   const int length = static_cast<int> (a.size());
+   int sum          = 0;
+
+   for (int i = 0; i < length; ++i) {
+      sum += a[static_cast<std::size_t> (i)]
+             * b[static_cast<std::size_t> ((i + tau) % length)];
+   }
+   return sum;
+}
 
 bool contains(const std::string& text, const std::string& fragment) {
    return text.find(fragment) != std::string::npos;
@@ -471,4 +516,253 @@ TEST(FramesL1OC, Test20_Reproducible) {
 
    EXPECT_EQ(levelFrameSvg(computeLevelFrame(level), level),
              levelFrameSvg(computeLevelFrame(level), level));
+}
+
+// ───────────────────── корреляционные кадры дальномерных кодов ─────────────────────
+
+// Прореживание симметрично относительно τ = 0 (решение Р-5б): шаг — ближайшее нечётное не
+// меньше ⌈4093/256⌉ = 16, центральный бин центрирован на нуле, ряд симметричен по сдвигу
+TEST(FrameAcfL1OC, Test21_BinningIsSymmetric) {
+   const AcfFrame frame = computeAcfFrame(configuration(1, 1));
+
+   EXPECT_EQ(frame.decimationStep, 17);
+   ASSERT_EQ(frame.codeD.bins.size(), 241U);
+   ASSERT_EQ(frame.codeP.bins.size(), 241U);
+
+   const std::size_t middle = frame.codeD.bins.size() / 2U;
+
+   EXPECT_DOUBLE_EQ(frame.codeD.bins[middle].tauChips, 0.0);
+   EXPECT_DOUBLE_EQ(frame.codeD.bins.front().tauChips, -2039.0);
+   EXPECT_DOUBLE_EQ(frame.codeD.bins.back().tauChips,  2039.0);
+
+   for (std::size_t i = 0; i < frame.codeD.bins.size(); ++i) {
+      const std::size_t mirror = frame.codeD.bins.size() - 1U - i;
+
+      EXPECT_DOUBLE_EQ(frame.codeD.bins[i].tauChips, -frame.codeD.bins[mirror].tauChips);
+   }
+}
+
+// Контроль метода: битовый счёт (XOR и popcount) против прямого суммирования в {+1, −1}.
+// Сверяется полное распределение боковых лепестков ПАКФ ДК_L1OCd, j = 1
+TEST(FrameAcfL1OC, Test22_MatchesDirectSummation) {
+   const AcfFrame frame          = computeAcfFrame(configuration(1, 1));
+   const std::vector<int> symbols = codeSymbols(1, false);
+   std::map<int, int> sidelobes;
+   int peak = 0;
+
+   for (int tau = 1; tau < glonass::codeLengthD; ++tau) {
+      const int value = correlationDirect(symbols, symbols, tau);
+
+      sidelobes[value] += 1;
+      peak              = std::max(peak, std::abs(value));
+   }
+   EXPECT_EQ(frame.codeD.mainLobe,     correlationDirect(symbols, symbols, 0));
+   EXPECT_EQ(frame.codeD.peakSidelobe, peak);
+   ASSERT_EQ(frame.codeD.sidelobeValues.size(), sidelobes.size());
+   std::size_t index = 0;
+
+   for (const std::pair<const int, int>& item : sidelobes) {
+      EXPECT_EQ(frame.codeD.sidelobeValues[index], item.first);
+      EXPECT_EQ(frame.codeD.sidelobeCounts[index], item.second);
+      ++index;
+   }
+}
+
+// Контрольные значения независимого счёта (Python) для j = 1. Периодическое продолжение на
+// ±2046 чипов даёт для ДК_L1OCd пять главных лепестков (τ = 0, ±1023, ±2046), для ДК_L1OCp —
+// один: периоды кодов различаются вчетверо
+TEST(FrameAcfL1OC, Test23_MatchesIndependentComputation) {
+   const AcfFrame frame     = computeAcfFrame(configuration(1, 24));
+   const std::size_t middle = frame.codeD.bins.size() / 2U;
+
+   EXPECT_EQ(frame.satellite, 1);
+   EXPECT_EQ(frame.codeD.lengthChips,  1023);
+   EXPECT_EQ(frame.codeD.mainLobe,     1023);
+   EXPECT_EQ(frame.codeD.peakSidelobe, 65);
+   EXPECT_NEAR(frame.codeD.peakSidelobeDb, -23.939, 1.0e-3);
+   EXPECT_EQ(frame.codeD.sidelobeValues, (std::vector<int>{ -65, -1, 63 }));
+   EXPECT_EQ(frame.codeD.sidelobeCounts, (std::vector<int>{ 112, 798, 112 }));
+
+   EXPECT_EQ(frame.codeP.lengthChips,  4092);
+   EXPECT_EQ(frame.codeP.mainLobe,     4092);
+   EXPECT_EQ(frame.codeP.peakSidelobe, 204);
+   EXPECT_NEAR(frame.codeP.peakSidelobeDb, -26.046, 1.0e-3);
+   EXPECT_EQ(frame.codeP.sidelobeValues.size(), 81U);
+
+   EXPECT_NEAR(frame.codeD.bins.front().lowDb,     -60.198, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins.front().highDb,      0.000, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins.front().averageDb, -48.969, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins[middle].lowDb,     -60.198, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins[middle].highDb,      0.000, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins[middle].averageDb, -52.423, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins[middle + 1U].highDb, -23.939, 1.0e-3);
+
+   EXPECT_NEAR(frame.codeP.bins.front().lowDb,     -70.000, 1.0e-3); // пол шкалы: R(τ) = 0
+   EXPECT_NEAR(frame.codeP.bins.front().highDb,    -31.898, 1.0e-3);
+   EXPECT_NEAR(frame.codeP.bins[middle].highDb,      0.000, 1.0e-3);
+   EXPECT_NEAR(frame.codeP.bins[middle].averageDb, -34.061, 1.0e-3);
+
+   EXPECT_DOUBLE_EQ(frame.axisLowDb,  -70.0);
+   EXPECT_DOUBLE_EQ(frame.axisHighDb,   2.0);
+}
+
+// Ряды и правила отображения выводятся в ответе: без них кадр невоспроизводим (Р3.17)
+TEST(FrameAcfL1OC, Test24_JsonCarriesSeriesAndRenderRules) {
+   const StreamRequest request = configuration(1, 3);
+   const std::string   json    = acfFrameJson(computeAcfFrame(request), request);
+
+   EXPECT_TRUE(contains(json, "\"kind\": \"acf\""));
+   EXPECT_TRUE(contains(json, "\"satellite\": 1"));
+   EXPECT_TRUE(contains(json, "\"definition\": \"20·lg|R(τ)/N|\""));
+   EXPECT_TRUE(contains(json, "\"source\": \"таблицы ДК блока А_L1OC\""));
+   EXPECT_TRUE(contains(json, "\"spanChips\": 2046"));
+   EXPECT_TRUE(contains(json, "\"icdClause\": \"2.2.1\""));
+   EXPECT_TRUE(contains(json, "\"icdClause\": \"2.2.2\""));
+   EXPECT_TRUE(contains(json, "\"peakSidelobe\": 65"));
+   EXPECT_TRUE(contains(json, "\"sidelobeCounts\": [112, 798, 112]"));
+   EXPECT_TRUE(contains(json, "\"rule\": \"binMinMaxSymmetric\""));
+   EXPECT_TRUE(contains(json, "\"step\": 17"));
+   EXPECT_TRUE(contains(json, "\"points\": 241"));
+   EXPECT_TRUE(contains(json, "\"dbFloor\": -70"));
+   EXPECT_TRUE(contains(json, "\"tauChips\""));
+   EXPECT_TRUE(contains(json, "\"maxDb\""));
+   EXPECT_FALSE(contains(json, "nan"));
+   EXPECT_FALSE(contains(json, "inf"));
+}
+
+// Изображение по шаблону Р3: заголовок содержательный, идентификатора kind и строки
+// происхождения нет, опорная линия максимума бокового лепестка подписана
+TEST(FrameAcfL1OC, Test25_SvgFollowsFrameTemplate) {
+   const StreamRequest request = configuration(1, 3);
+   const std::string   image   = acfFrameSvg(computeAcfFrame(request), request);
+
+   EXPECT_TRUE(contains(image, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 960 540\""));
+   EXPECT_TRUE(contains(image,
+                        "<title>Периодическая автокорреляционная функция дальномерного кода</title>"));
+   EXPECT_TRUE(contains(image, "НКА j = 1"));
+   EXPECT_TRUE(contains(image, "коды Голда"));
+   EXPECT_TRUE(contains(image, "усечённые последовательности Касами"));
+   EXPECT_TRUE(contains(image, "Сдвиг τ, чипы"));
+   EXPECT_TRUE(contains(image, "Уровень, дБ отн. главного лепестка"));
+   EXPECT_TRUE(contains(image, "максимум бокового лепестка ДК_L1OCd: −23,939 дБ"));
+   EXPECT_TRUE(contains(image, "</svg>"));
+
+   EXPECT_FALSE(contains(image, ">Кадр acf"));
+   EXPECT_FALSE(contains(image, "signal-service-l1oc 1.0 ·"));
+   EXPECT_FALSE(contains(image, "nan"));
+}
+
+// Контроль метода для огибающей ансамбля: прямое суммирование по парам состава J = {1, 2, 3}
+TEST(FrameCcfL1OC, Test26_MatchesDirectSummation) {
+   const CcfFrame frame = computeCcfFrame(configuration(1, 3));
+   std::vector<std::vector<int> > symbols;
+
+   for (int satellite = 1; satellite <= 3; ++satellite) {
+      symbols.push_back(codeSymbols(satellite, false));
+   }
+   std::map<int, int> levels;
+   int peak   = 0;
+   int lowest = glonass::codeLengthD;
+
+   for (int tau = 0; tau < glonass::codeLengthD; ++tau) {
+      int value = 0;
+
+      for (std::size_t a = 0; a < symbols.size(); ++a) {
+         for (std::size_t b = a + 1U; b < symbols.size(); ++b) {
+            value = std::max(value, std::abs(correlationDirect(symbols[a], symbols[b], tau)));
+         }
+      }
+      levels[value] += 1;
+      peak           = std::max(peak, value);
+      lowest         = std::min(lowest, value);
+   }
+   EXPECT_EQ(frame.pairCount,          3);
+   EXPECT_EQ(frame.codeD.peak,         peak);
+   EXPECT_EQ(frame.codeD.lowest,       lowest);
+   EXPECT_EQ(frame.codeD.levelCount,   static_cast<int> (levels.size()));
+   EXPECT_EQ(frame.codeD.shiftsAtPeak, levels[peak]);
+}
+
+// Контрольные значения независимого счёта (Python) для состава J = 1…24 — сценарий Д_L1OC.10
+TEST(FrameCcfL1OC, Test27_MatchesIndependentComputation) {
+   const CcfFrame frame     = computeCcfFrame(configuration(1, 24));
+   const std::size_t middle = frame.codeD.bins.size() / 2U;
+
+   EXPECT_EQ(frame.pairCount, 276);
+
+   EXPECT_EQ(frame.codeD.peak,         65);
+   EXPECT_NEAR(frame.codeD.peakDb, -23.939, 1.0e-3);
+   EXPECT_EQ(frame.codeD.shiftsAtPeak, 1022);
+   EXPECT_EQ(frame.codeD.levelCount,   2);
+   EXPECT_EQ(frame.codeD.lowest,       1);
+   EXPECT_NEAR(frame.codeD.lowestDb, -60.198, 1.0e-3);
+
+   EXPECT_EQ(frame.codeP.peak,         254);
+   EXPECT_NEAR(frame.codeP.peakDb, -24.142, 1.0e-3);
+   EXPECT_EQ(frame.codeP.shiftsAtPeak, 1);
+   EXPECT_EQ(frame.codeP.levelCount,   89);
+   EXPECT_EQ(frame.codeP.lowest,       68);
+   EXPECT_NEAR(frame.codeP.lowestDb, -35.589, 1.0e-3);
+
+   EXPECT_NEAR(frame.codeD.bins[middle].lowDb,     -60.198, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins[middle].highDb,    -23.939, 1.0e-3);
+   EXPECT_NEAR(frame.codeD.bins[middle].averageDb, -26.072, 1.0e-3);
+   EXPECT_NEAR(frame.codeP.bins[middle].lowDb,     -35.589, 1.0e-3);
+   EXPECT_NEAR(frame.codeP.bins[middle].highDb,    -34.397, 1.0e-3);
+   EXPECT_NEAR(frame.codeP.bins[middle].averageDb, -35.056, 1.0e-3);
+
+   EXPECT_DOUBLE_EQ(frame.axisLowDb,  -70.0);
+   EXPECT_DOUBLE_EQ(frame.axisHighDb, -20.0);
+}
+
+// Состав из одного НКА: пар нет, кадр не определён — отказ разряда «нереализуемо» (422)
+TEST(FrameCcfL1OC, Test28_RejectsSingleSatellite) {
+   try {
+      computeCcfFrame(configuration(5, 5));
+      FAIL() << "ожидался отказ по составу";
+   } catch (const glonass_params::ParamError& error) {
+      EXPECT_EQ(error.kind(),  glonass_params::RejectKind::unrealizable);
+      EXPECT_EQ(error.field(), "j");
+      EXPECT_TRUE(contains(error.what(), "в составе один НКА"));
+   }
+}
+
+// Ряды и правила отображения выводятся в ответе (Р3.17)
+TEST(FrameCcfL1OC, Test29_JsonCarriesSeriesAndRenderRules) {
+   const StreamRequest request = configuration(1, 3);
+   const std::string   json    = ccfFrameJson(computeCcfFrame(request), request);
+
+   EXPECT_TRUE(contains(json, "\"kind\": \"ccf\""));
+   EXPECT_TRUE(contains(json, "\"satelliteCount\": 3"));
+   EXPECT_TRUE(contains(json, "\"pairCount\": 3"));
+   EXPECT_TRUE(contains(json, "\"definition\": \"env(τ) = max |R_ab(τ)| по парам a < b состава J\""));
+   EXPECT_TRUE(contains(json, "\"source\": \"таблицы ДК блока А_L1OC\""));
+   EXPECT_TRUE(contains(json, "\"shiftsAtPeak\""));
+   EXPECT_TRUE(contains(json, "\"levelCount\""));
+   EXPECT_TRUE(contains(json, "\"rule\": \"binMinMaxSymmetric\""));
+   EXPECT_TRUE(contains(json, "\"points\": 241"));
+   EXPECT_TRUE(contains(json, "\"minDb\""));
+   EXPECT_TRUE(contains(json, "\"avgDb\""));
+   EXPECT_FALSE(contains(json, "nan"));
+   EXPECT_FALSE(contains(json, "inf"));
+}
+
+// Изображение по шаблону Р3; состав при |J| ≤ 4 выводится перечислением
+TEST(FrameCcfL1OC, Test30_SvgFollowsFrameTemplate) {
+   const StreamRequest request = configuration(1, 3);
+   const std::string   image   = ccfFrameSvg(computeCcfFrame(request), request);
+
+   EXPECT_TRUE(contains(image, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 960 540\""));
+   EXPECT_TRUE(contains(image,
+                        "<title>Огибающая периодической взаимнокорреляционной функции ансамбля</title>"));
+   EXPECT_TRUE(contains(image, "J = {1, 2, 3}"));
+   EXPECT_TRUE(contains(image, "пар 3"));
+   EXPECT_TRUE(contains(image, "Сдвиг τ, чипы"));
+   EXPECT_TRUE(contains(image, "Уровень, дБ отн. длины кода"));
+   EXPECT_TRUE(contains(image, "сдвигов на максимуме"));
+   EXPECT_TRUE(contains(image, "</svg>"));
+
+   EXPECT_FALSE(contains(image, ">Кадр ccf"));
+   EXPECT_FALSE(contains(image, "signal-service-l1oc 1.0 ·"));
+   EXPECT_FALSE(contains(image, "nan"));
 }
