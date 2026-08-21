@@ -1,9 +1,11 @@
 #ifndef SERVICE_JSON_WRITER_H
 #define SERVICE_JSON_WRITER_H
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace glonass_service {
 // Экранирование строки для тела JSON: кавычка, обратная косая черта и управляющие символы
@@ -37,6 +39,35 @@ inline std::string jsonEscape(const std::string& text) {
       }
    }
    return out;
+}
+
+// Массив чисел с заданным форматом элемента (например "%.3f") — фрагмент для addRaw
+inline std::string jsonNumberArray(const std::vector<double>& values, const char* pattern) {
+   std::string out = "[";
+   char buffer[48];
+
+   for (std::size_t i = 0; i < values.size(); ++i) {
+      if (i > 0) {
+         out += ", ";
+      }
+      std::snprintf(buffer, sizeof(buffer), pattern, values[i]);
+      out += buffer;
+   }
+   return out + "]";
+}
+
+// Массив целых — фрагмент для addRaw
+template<typename Integer>
+inline std::string jsonIntegerArray(const std::vector<Integer>& values) {
+   std::string out = "[";
+
+   for (std::size_t i = 0; i < values.size(); ++i) {
+      if (i > 0) {
+         out += ", ";
+      }
+      out += std::to_string(values[i]);
+   }
+   return out + "]";
 }
 
 class JsonObject {

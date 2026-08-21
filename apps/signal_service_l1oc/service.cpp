@@ -10,7 +10,9 @@
 #include <string>
 
 #include "error_response.h"
+#include "frame_level.h"
 #include "frame_psd.h"
+#include "frame_waveform.h"
 #include "json_writer.h"
 #include "service_version.h"
 #include "state_metrics.h"
@@ -246,20 +248,30 @@ void Service::registerRoutes() {
             kind.erase(kind.size() - svg.size());
          }
 
-         if (kind != "psd") {
+         if ((kind != "psd") && (kind != "waveform") && (kind != "level")) {
             respondWithError(response, notFound("кадр не обслуживается: " + kind));
             return;
          }
 
          try {
             const StreamRequest parsed = parseStreamRequest(request);
-            const PsdFrame frame       = computePsdFrame(parsed);
+            std::string body;
 
-            if (asImage) {
-               response.set_content(psdFrameSvg(frame, parsed), contentTypeSvg);
+            if (kind == "psd") {
+               const PsdFrame frame = computePsdFrame(parsed);
+
+               body = asImage ? psdFrameSvg(frame, parsed) : psdFrameJson(frame, parsed);
+            } else if (kind == "waveform") {
+               const WaveformFrame frame = computeWaveformFrame(parsed);
+
+               body = asImage ? waveformFrameSvg(frame, parsed)
+                              : waveformFrameJson(frame, parsed);
             } else {
-               response.set_content(psdFrameJson(frame, parsed), contentTypeJson);
+               const LevelFrame frame = computeLevelFrame(parsed);
+
+               body = asImage ? levelFrameSvg(frame, parsed) : levelFrameJson(frame, parsed);
             }
+            response.set_content(body, asImage ? contentTypeSvg : contentTypeJson);
          } catch (const glonass_params::ParamError& error) {
             respondWithError(response, fromParamError(error));
          }

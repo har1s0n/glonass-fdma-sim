@@ -51,9 +51,9 @@ TEST_F(ServiceHttp, Test1_HealthzReportsOk) {
    const auto response = client.Get("/healthz");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->status,                           200);
    EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
-   EXPECT_EQ(response->body, "{\"status\": \"ok\"}");
+   EXPECT_EQ(response->body,                             "{\"status\": \"ok\"}");
 }
 
 TEST_F(ServiceHttp, Test2_InfoReportsServiceAndIcdProfile) {
@@ -76,7 +76,7 @@ TEST_F(ServiceHttp, Test3_UnknownPathGivesErrorModel) {
    const auto response = client.Get("/v1/jobs");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 404);
+   EXPECT_EQ(response->status,                           404);
    EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
    EXPECT_EQ(response->body,
              "{\"error\": \"not_found\", "
@@ -106,15 +106,15 @@ TEST_F(ServiceHttp, Test6_HealthcheckFailsWhileShuttingDown) {
    EXPECT_EQ(glonass_service::runHealthcheck(localHost, port_), 1);
 }
 
-// ───────────────── режим А — показатели состояния (§ 5.1 контракта) ─────────────────
+// ───────────────── режим А — показатели состояния ─────────────────
 
-// Умолчания § 4 контракта: пустая строка запроса эквивалентна умолчаниям модуля запуска
+// пустая строка запроса эквивалентна умолчаниям модуля запуска
 TEST_F(ServiceHttp, Test7_StateWithDefaults) {
    httplib::Client client(localHost, port_);
    const auto response = client.Get("/v1/state");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->status,                           200);
    EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
    EXPECT_EQ(response->body,
              "{\"n\": 0, \"t\": 0, \"band\": \"L1OC\", \"satelliteCount\": 24, "
@@ -124,7 +124,6 @@ TEST_F(ServiceHttp, Test7_StateWithDefaults) {
              "\"convSymbolIndex\": 0, \"lineLength\": 500}}");
 }
 
-// Опорная конфигурация К1 расчёта docs/raschet_l1oc/gate_l1oc_state.py
 TEST_F(ServiceHttp, Test8_StateReferenceConfiguration) {
    httplib::Client client(localHost, port_);
    const auto response = client.Get("/v1/state?j=1:24&fs=20000000&n0=0&t=12.5");
@@ -174,7 +173,7 @@ TEST_F(ServiceHttp, Test11_StateUnrealizableGives422) {
 }
 
 // Показатели вычисляются аналитически: точка без побочных эффектов и без состояния,
-// повторное обращение даёт тот же ответ (§ 3, решение 2)
+// повторное обращение даёт тот же ответ
 TEST_F(ServiceHttp, Test12_StateIsPureFunction) {
    httplib::Client client(localHost, port_);
    const auto first  = client.Get("/v1/state?j=1:8&t=3.5");
@@ -183,24 +182,24 @@ TEST_F(ServiceHttp, Test12_StateIsPureFunction) {
    ASSERT_TRUE(first);
    ASSERT_TRUE(second);
    EXPECT_EQ(first->status, 200);
-   EXPECT_EQ(first->body, second->body);
+   EXPECT_EQ(first->body,   second->body);
 }
 
 // ───────────────────────── режим Б — потоковая выдача ─────────────────────────
 
-// Тело — сырые двоичные отсчёты без заголовка и разделителей; длина задаётся n (контракт § 5.2)
+// Тело — сырые двоичные отсчёты без заголовка и разделителей; длина задаётся n
 TEST_F(ServiceHttp, Test13_StreamCf32DeliversRawSamples) {
    httplib::Client client(localHost, port_);
    const auto response = client.Get("/v1/stream?j=1&n=1024&format=cf32");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 200);
-   EXPECT_EQ(response->get_header_value("Content-Type"), "application/octet-stream");
+   EXPECT_EQ(response->status,                                200);
+   EXPECT_EQ(response->get_header_value("Content-Type"),      "application/octet-stream");
    EXPECT_EQ(response->get_header_value("Transfer-Encoding"), "chunked");
-   EXPECT_EQ(response->body.size(), 1024U * 8U);
+   EXPECT_EQ(response->body.size(),                           1024U * 8U);
 
    // I[0] = −1, Q[0] = +0,0 (Д_L1OC.11); порядок байтов прямой
-   EXPECT_EQ(response->body.substr(0, 8), std::string("\x00\x00\x80\xBF\x00\x00\x00\x00", 8));
+   EXPECT_EQ(response->body.substr(0, 8),                     std::string("\x00\x00\x80\xBF\x00\x00\x00\x00", 8));
 }
 
 // Умолчание формата — cs16 (решение 6): 4 байта на отсчёт
@@ -209,7 +208,7 @@ TEST_F(ServiceHttp, Test14_StreamDefaultsToCs16) {
    const auto response = client.Get("/v1/stream?j=1&n=1024");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->status,      200);
    EXPECT_EQ(response->body.size(), 1024U * 4U);
 }
 
@@ -222,7 +221,7 @@ TEST_F(ServiceHttp, Test15_StreamContentIndependentOfBlockSamples) {
    ASSERT_TRUE(small);
    ASSERT_TRUE(large);
    EXPECT_EQ(small->status, 200);
-   EXPECT_EQ(small->body, large->body);
+   EXPECT_EQ(small->body,   large->body);
 }
 
 // Нарушение В.2 отклоняется ДО начала выдачи: код 422 и тело модели ошибок, а не обрезанный
@@ -232,7 +231,7 @@ TEST_F(ServiceHttp, Test16_StreamRejectsNonRepresentableBeforeOutput) {
    const auto response = client.Get("/v1/stream?j=1&n=1024&fs=4091999");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 422);
+   EXPECT_EQ(response->status,                           422);
    EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
    EXPECT_TRUE(contains(response->body, "\"error\": \"unprocessable\""));
    EXPECT_TRUE(contains(response->body, "\"field\": \"fs\""));
@@ -253,9 +252,7 @@ TEST_F(ServiceHttp, Test17_StreamBadValueGives400) {
    }
 }
 
-// Поток удерживает поток пула на всё время выдачи; сверх предела SIGNAL_MAX_STREAMS обращение
-// отклоняется кодом 503, служебные точки при этом продолжают отвечать.
-// ───────────────────── кадры § 5.4 — точка /v1/frames ─────────────────────
+// ───────────────────── кадры точка /v1/frames ─────────────────────
 
 // Числовые ряды кадра: те же параметры сигнала, что и в прочих режимах
 TEST_F(ServiceHttp, Test19_FramePsdGivesSeriesJson) {
@@ -265,7 +262,7 @@ TEST_F(ServiceHttp, Test19_FramePsdGivesSeriesJson) {
    const auto response = client.Get("/v1/frames/psd?j=1:2");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->status,                           200);
    EXPECT_EQ(response->get_header_value("Content-Type"), "application/json; charset=utf-8");
    EXPECT_TRUE(contains(response->body, "\"kind\": \"psd\""));
    EXPECT_TRUE(contains(response->body, "\"points\": 1639"));
@@ -280,16 +277,16 @@ TEST_F(ServiceHttp, Test20_FramePsdGivesSvgImage) {
    const auto response = client.Get("/v1/frames/psd.svg?j=1:2");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(response->status, 200);
+   EXPECT_EQ(response->status,                           200);
    EXPECT_EQ(response->get_header_value("Content-Type"), "image/svg+xml; charset=utf-8");
    EXPECT_TRUE(contains(response->body, "viewBox=\"0 0 960 540\""));
    EXPECT_TRUE(contains(response->body, "</svg>"));
 }
 
-// Кадры набора, не введённые реализацией, дают 404 по общей модели ошибок
+// Кадры набора, не введённые реализацией, дают 404 по общей модели ошибок.
 TEST_F(ServiceHttp, Test21_UnknownFrameKindGivesNotFound) {
    httplib::Client client(localHost, port_);
-   const auto response = client.Get("/v1/frames/waveform");
+   const auto response = client.Get("/v1/frames/acf");
 
    ASSERT_TRUE(response);
    EXPECT_EQ(response->status, 404);
@@ -315,16 +312,16 @@ TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
    std::atomic<bool> release{ false };
 
    std::thread holder([this, &streaming, &release] {
-         httplib::Client client(localHost, port_);
+                      httplib::Client client(localHost, port_);
 
-         client.set_read_timeout(10, 0);
+                      client.set_read_timeout(10, 0);
 
-         // Поток без предела: n и seconds не заданы (§ 5.2)
-         client.Get("/v1/stream?j=1&blockSamples=256",
-                    [&streaming, &release](const char*, std::size_t) {
-               streaming.store(true);
-               return !release.load(); // приём прекращается по сигналу — обрыв получателем
-            });
+// Поток без предела: n и seconds не заданы
+                      client.Get("/v1/stream?j=1&blockSamples=256",
+                                 [&streaming, &release](const char*, std::size_t) {
+                                 streaming.store(true);
+                                 return !release.load(); // приём прекращается по сигналу — обрыв получателем
+         });
       });
 
    for (int attempt = 0; (attempt < 2000) && !streaming.load(); ++attempt) {
@@ -352,6 +349,6 @@ TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
    const auto accepted = client.Get("/v1/stream?j=1&n=8&format=cf32");
 
    ASSERT_TRUE(accepted);
-   EXPECT_EQ(accepted->status, 200);
+   EXPECT_EQ(accepted->status,      200);
    EXPECT_EQ(accepted->body.size(), 8U * 8U);
 }

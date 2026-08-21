@@ -37,23 +37,20 @@ void writeFloatLe(unsigned char* bytes, float value) noexcept {
    static_assert(sizeof(float) == sizeof(std::uint32_t), "требуется 32-битный float");
    std::uint32_t bits = 0;
 
-   std::memcpy(&bits, &value, sizeof(bits)); // корректный type-pun (не UB, в отличие от reinterpret)
+   std::memcpy(&bits, &value, sizeof(bits));
    bytes[0] = static_cast<unsigned char> (bits         & 0xFFU);
    bytes[1] = static_cast<unsigned char> ((bits >>  8) & 0xFFU);
    bytes[2] = static_cast<unsigned char> ((bits >> 16) & 0xFFU);
    bytes[3] = static_cast<unsigned char> ((bits >> 24) & 0xFFU);
 }
 
-// Нулевая ЦИ, строка нормального типа (Д_L1OC.10) — слой содержания Б_L1OC.11 в область
-// текущих работ не входит, как и в модуле запуска glonass_signal_gen_l1oc.
+// Нулевая ЦИ, строка нормального типа (слой содержания Б_L1OC.11 задел на будущее)
 glonass::PayloadProviderL1OC zeroPayloadProviderL1OC() {
    return [](std::int64_t /*lineIndex*/) {
              return glonass::LineContentL1OC{}; // lineType = normal, ЦИ = 0 (value-init)
    };
 }
 
-// Длительность по seconds: n = round(seconds·Fs), половина — ОТ нуля (§ 0.1 поз.20), как в
-// модуле запуска. Предел приведения задаётся разрядностью int64; NaN отсеивается сравнением.
 std::int64_t sampleCountFromSeconds(double seconds, std::int64_t sampleRate) {
    const double offset = seconds * static_cast<double> (sampleRate);
 
@@ -63,7 +60,6 @@ std::int64_t sampleCountFromSeconds(double seconds, std::int64_t sampleRate) {
    }
    return std::llround(offset);
 }
-
 } // namespace
 
 glonass::SourceConfigL1OC sourceConfigOf(const StreamRequest& request) {
@@ -73,8 +69,6 @@ glonass::SourceConfigL1OC sourceConfigOf(const StreamRequest& request) {
    config.referenceFreq     = request.referenceFreq;
    config.globalStartSample = static_cast<glonass::SampleIndex> (request.startSample);
 
-   // Порядок по возрастанию j (Д_L1OC.8) устанавливает сам источник; здесь сохраняется
-   // соответствие satellites ↔ amplitudes ↔ initialPhases порядка разбора.
    for (std::size_t index = 0; index < request.satellites.size(); ++index) {
       glonass::SatelliteConfigL1OC satelliteConfig;
 
@@ -96,18 +90,21 @@ const char*formatName(SampleFormat format) noexcept {
    return (format == SampleFormat::cf32) ? "cf32" : "cs16";
 }
 
-double quantizationScaleCs16(const std::vector<double>& amplitudes) noexcept {
+double peakBound(const std::vector<double>& amplitudes) noexcept {
    double sumAmplitudes = 0.0;
 
    for (const double amplitude : amplitudes) { // A_j ≥ 0 (поз.24) ⇒ Σ A_j = Σ |A_j|
       sumAmplitudes += amplitude;
    }
 
-   // η из блока Д (Д_L1OC.1) — та же функция, что применяет ядро: масштаб не должен зависеть
+   // η из блока Д (Д_L1OC.1) — та же функция, что применяет ядро: граница не должна зависеть
    // от отдельного пересчёта нормировки.
-   const double bound = glonass::normalizationFactor(amplitudes) * sumAmplitudes;
+   return glonass::normalizationFactor(amplitudes) * sumAmplitudes;
+}
 
-   return static_cast<double> (glonass_tools::cs16FullScale) / bound;
+double quantizationScaleCs16(const std::vector<double>& amplitudes) noexcept {
+   // Полная шкала CS16 приходится на аналитическую границу отсчёта (Д_L1OC.3)
+   return static_cast<double> (glonass_tools::cs16FullScale) / peakBound(amplitudes);
 }
 
 StreamRequest parseStreamRequest(const httplib::Request& request) {
@@ -129,12 +126,9 @@ StreamRequest parseStreamRequest(const httplib::Request& request) {
    glonass_params::requireSampleRate(parsed.sampleRate, keySampleRate);
    glonass_params::requireStartSample(parsed.startSample, keyStartSample);
 
-   // Точка выполняет прогон, поэтому нереализуемая конфигурация отклоняется до выдачи тела
-   // (В.2, поз.34; Б_L1OC.8) — как в модуле запуска.
    glonass_params::requireRepresentable(parsed.sampleRate, parsed.referenceFreq, keySampleRate);
    glonass_params::requireSymbolRate(parsed.sampleRate, keySampleRate);
 
-   // Длительность: n старше seconds; не задано ни то, ни другое — поток без предела (§ 5.2)
    const std::string* sampleCount = paramOrNull(request, keySampleCount);
    const std::string* seconds     = paramOrNull(request, keySeconds);
 
@@ -189,8 +183,6 @@ StreamRequest parseStreamRequest(const httplib::Request& request) {
       (phases != nullptr) ? *phases : glonass_params::defaultPhases,
       parsed.satellites.size(), keyPhases);
 
-   // A_j ≥ 0 (поз.24) и Σ A_j² > 0 (предусловие Д_L1OC.1): ядро опирается на assert,
-   // отключаемый в сборке Release.
    glonass_params::requireAmplitudes(parsed.amplitudes, keyAmplitudes);
    return parsed;
 }

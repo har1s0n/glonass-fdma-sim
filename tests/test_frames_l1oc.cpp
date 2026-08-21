@@ -1,5 +1,7 @@
 #include "fft_radix2.h"
+#include "frame_level.h"
 #include "frame_psd.h"
+#include "frame_waveform.h"
 #include "svg_canvas.h"
 
 #include "glonass/types.h"
@@ -11,17 +13,26 @@
 #include <string>
 #include <vector>
 
-// Кадры микросервиса L1OC — базовый слой и кадр спектральной плотности мощности
+// Кадры микросервиса L1OC — базовый слой, кадры спектральной плотности мощности,
+// осциллограммы квадратур и гистограммы мгновенных значений
 
 namespace {
+using glonass_service::computeLevelFrame;
 using glonass_service::computePsdFrame;
+using glonass_service::computeWaveformFrame;
 using glonass_service::dftDirect;
 using glonass_service::fftRadix2;
+using glonass_service::LevelFrame;
+using glonass_service::levelFrameJson;
+using glonass_service::levelFrameSvg;
 using glonass_service::numberRu;
 using glonass_service::PsdFrame;
 using glonass_service::psdFrameJson;
 using glonass_service::psdFrameSvg;
 using glonass_service::StreamRequest;
+using glonass_service::WaveformFrame;
+using glonass_service::waveformFrameJson;
+using glonass_service::waveformFrameSvg;
 
 bool contains(const std::string& text, const std::string& fragment) {
    return text.find(fragment) != std::string::npos;
@@ -63,7 +74,7 @@ std::vector<std::complex<double> > testSignal(std::size_t length) {
 
 // ───────────────────── быстрое преобразование Фурье ─────────────────────
 
-// Сверка с прямым дискретным преобразованием: тот же приём, что в fft_check.py
+// Сверка с прямым дискретным преобразованием
 TEST(FftRadix2L1OC, Test1_MatchesDirectTransform) {
    const std::vector<std::complex<double> > source   = testSignal(32);
    const std::vector<std::complex<double> > expected = dftDirect(source);
@@ -122,8 +133,7 @@ TEST(SvgCanvasL1OC, Test4_RussianNumberFormat) {
 
 // ───────────────────── кадр спектральной плотности мощности ─────────────────────
 
-// Параметры оценки и прореживания — по решению У5: 8192 × 32, предел 2000 точек,
-// шаг прореживания округляется вверх (8192/2000 → 5 → 1639 точек)
+// Параметры оценки и прореживания
 TEST(FramePsdL1OC, Test5_EstimateParameters) {
    const PsdFrame frame = computePsdFrame(configuration(1, 3));
 
@@ -228,4 +238,237 @@ TEST(FramePsdL1OC, Test10_Reproducible) {
 
    EXPECT_EQ(psdFrameSvg(computePsdFrame(request), request),
              psdFrameSvg(computePsdFrame(request), request));
+}
+
+// ───────────────────── кадр осциллограммы квадратур ─────────────────────
+
+// Окно кадра: 16 чипов уплотнения при Fs = 20 МГц дают 313 отсчётов. Разметка компонент —
+// по кодовой фазе (А_L1OC.5–А_L1OC.7); при n₀ = 0 границы чипов целые
+TEST(FrameWaveformL1OC, Test11_WindowAndZones) {
+   const WaveformFrame frame = computeWaveformFrame(configuration(5, 5));
+
+   EXPECT_EQ(frame.sampleCount,       313);
+   EXPECT_EQ(frame.chip.size(),       313U);
+   EXPECT_EQ(frame.inphase.size(),    313U);
+   EXPECT_EQ(frame.quadrature.size(), 313U);
+   EXPECT_NEAR(frame.chipSamples, 19.550342130987293, 1e-12); // Fs / f_T1
+   EXPECT_NEAR(frame.peakBound,   1.0,                1e-12); // η·ΣA_j при |J| = 1, A = 1
+   EXPECT_NEAR(frame.axisLimit,   1.35,               1e-12);
+   EXPECT_NEAR(frame.axisStep,    0.5,                1e-12);
+
+   ASSERT_EQ(frame.zones.size(), 16U);
+
+   for (std::size_t index = 0; index < frame.zones.size(); ++index) {
+      EXPECT_NEAR(frame.zones[index].from, static_cast<double> (index),       1e-12);
+      EXPECT_NEAR(frame.zones[index].to,   static_cast<double> (index) + 1.0, 1e-12);
+      EXPECT_EQ(frame.zones[index].select, static_cast<int> (index % 2U)) << "чип " << index;
+   }
+   EXPECT_NEAR(frame.chip.front(), 0.0,                            1e-12);
+   EXPECT_NEAR(frame.chip.back(),  312.0 * 1023000.0 / 20000000.0, 1e-12);
+}
+
+// Одиночный источник при Δf = 0 и φ_{0,j} = 0: η = 1, квадратура Q нулевая, |I| ≡ 1.
+// Число переходов знака в окне — 16 (независимый счёт)
+TEST(FrameWaveformL1OC, Test12_SingleSourceQuadratures) {
+   const WaveformFrame frame = computeWaveformFrame(configuration(5, 5));
+   int positive              = 0;
+   int negative              = 0;
+   int transitions           = 0;
+
+   for (std::size_t index = 0; index < frame.inphase.size(); ++index) {
+      EXPECT_EQ(frame.quadrature[index],         0.0) << "отсчёт " << index;
+      EXPECT_EQ(std::fabs(frame.inphase[index]), 1.0) << "отсчёт " << index;
+
+      if (frame.inphase[index] > 0.0) {
+         ++positive;
+      } else {
+         ++negative;
+      }
+
+      if ((index > 0) && (frame.inphase[index] != frame.inphase[index - 1])) {
+         ++transitions;
+      }
+   }
+   EXPECT_EQ(positive,    136);
+   EXPECT_EQ(negative,    177);
+   EXPECT_EQ(transitions, 16);
+}
+
+// Контрольные отсчёты независимого счёта (Python) для j = 5, n₀ = 0, Fs = 20 МГц.
+// Чипы компоненты L1OCd (σ = 0) держат знак; чипы L1OCp (σ = 1) делит меандр пополам
+TEST(FrameWaveformL1OC, Test13_SamplesMatchIndependentComputation) {
+   const WaveformFrame frame = computeWaveformFrame(configuration(5, 5));
+
+   ASSERT_EQ(frame.inphase.size(), 313U);
+   struct Reference {
+      std::size_t index;
+      double      inphase;
+   };
+   const Reference references[] = { {   0, -1.0 }, {  19, -1.0 }, {  20, +1.0 }, {  29, +1.0 },
+      {  30, -1.0 }, {  39, -1.0 }, {  40, +1.0 }, {  58, +1.0 },
+      {  59, +1.0 }, {  68, +1.0 }, {  69, -1.0 }, {  78, -1.0 },
+      {  79, -1.0 }, {  97, -1.0 }, { 196, +1.0 }, { 215, +1.0 },
+      { 216, +1.0 }, { 224, +1.0 }, { 225, -1.0 }, { 234, -1.0 },
+      { 294, +1.0 }, { 303, +1.0 }, { 304, -1.0 }, { 312, -1.0 } };
+
+   for (const Reference& reference : references) {
+      EXPECT_EQ(frame.inphase[reference.index], reference.inphase) << "отсчёт " << reference.index;
+   }
+}
+
+// Ряды и правила отображения выводятся в ответе: без них кадр невоспроизводим (Р3.17)
+TEST(FrameWaveformL1OC, Test14_JsonCarriesSeriesAndRenderRules) {
+   const StreamRequest request = configuration(5, 5);
+   const std::string   json    = waveformFrameJson(computeWaveformFrame(request), request);
+
+   EXPECT_TRUE(contains(json, "\"kind\": \"waveform\""));
+   EXPECT_TRUE(contains(json, "\"chips\": 16"));
+   EXPECT_TRUE(contains(json, "\"sampleCount\": 313"));
+   EXPECT_TRUE(contains(json, "\"chipRateHz\": 1023000"));
+   EXPECT_TRUE(contains(json, "\"residualFreqHz\": 0"));
+   EXPECT_TRUE(contains(json, "\"zoneRule\""));
+   EXPECT_TRUE(contains(json, "\"select\": 1"));
+   EXPECT_TRUE(contains(json, "\"chip\""));
+   EXPECT_TRUE(contains(json, "\"inphase\""));
+   EXPECT_TRUE(contains(json, "\"quadrature\""));
+   EXPECT_FALSE(contains(json, "nan"));
+   EXPECT_FALSE(contains(json, "inf"));
+}
+
+// Изображение строится по шаблону Р3: заголовок содержательный, идентификатора kind нет,
+// строки происхождения нет. Оговорка о нулевой квадратуре Q снята: она верна лишь при φ₀ = 0
+TEST(FrameWaveformL1OC, Test15_SvgFollowsFrameTemplate) {
+   const StreamRequest request = configuration(5, 5);
+   const std::string   image   = waveformFrameSvg(computeWaveformFrame(request), request);
+
+   EXPECT_TRUE(contains(image, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 960 540\""));
+   EXPECT_TRUE(contains(image, "<title>Осциллограмма квадратур I и Q в чиповом масштабе</title>"));
+   EXPECT_TRUE(contains(image, "Чип уплотнения от начала прогона"));
+   EXPECT_TRUE(contains(image, "Нормированный отсчёт u[n]"));
+   EXPECT_TRUE(contains(image, "J = {5}"));
+   EXPECT_TRUE(contains(image, "313 отсчётов"));
+   EXPECT_TRUE(contains(image, "Квадратура I"));
+   EXPECT_TRUE(contains(image, "Чипы компоненты L1OCp"));
+   EXPECT_TRUE(contains(image, ">L1OCd<"));
+   EXPECT_TRUE(contains(image, ">L1OCp<"));
+   EXPECT_TRUE(contains(image, "</svg>"));
+
+   EXPECT_FALSE(contains(image, "нулевая при"));
+   EXPECT_FALSE(contains(image, ">Кадр waveform"));
+   EXPECT_FALSE(contains(image, "signal-service-l1oc 1.0 ·"));
+   EXPECT_FALSE(contains(image, "nan"));
+}
+
+// ───────────────────── кадр гистограммы мгновенных значений ─────────────────────
+
+// Показатели прогона против независимого счёта при J = 1…24, A_j = 1, n₀ = 0.
+// Отсчёт выдаётся в float32 (Д.9), поэтому пик превышает аналитическую границу η·ΣA_j
+// на единицы 10⁻⁸ относительных
+TEST(FrameLevelL1OC, Test16_MetricsMatchIndependentComputation) {
+   const LevelFrame frame = computeLevelFrame(configuration(1, 24));
+
+   EXPECT_NEAR(frame.eta,             0.20412414523193154, 1e-15); // 1/√24
+   EXPECT_NEAR(frame.limit,           4.898979485566357,   1e-12); // η·ΣA_j = √24
+   EXPECT_NEAR(frame.peak,            4.898979663848877,   1e-9);
+   EXPECT_NEAR(frame.rms,             0.8918563062573858,  1e-9);
+   EXPECT_NEAR(frame.crestFactor,     5.493014546712252,   1e-9);
+   EXPECT_NEAR(frame.crestFactorDb,   14.796214982606300,  1e-9);
+   EXPECT_NEAR(frame.axisHighPercent, 50.0,                1e-12);
+   EXPECT_NEAR(frame.axisStepValue,   1.0,                 1e-12);
+   EXPECT_GT(frame.peak, frame.limit); // округление float32 выводит пик за границу
+}
+
+// Заполнение корзин против независимого счёта. Квадратура I принимает 9 различных значений:
+// при равных A_j символ ЦА2 — линейная форма от номера j, и сумма по J = 1…24 вырождена.
+// Пять уровней приходятся ровно на границу корзины; сторону выбирает округление до float32,
+// поэтому уровню −6 отвечает корзина 47, а симметричному +6
+TEST(FrameLevelL1OC, Test17_BinsMatchIndependentComputation) {
+   const LevelFrame frame = computeLevelFrame(configuration(1, 24));
+
+   ASSERT_EQ(frame.counts.size(), 128U);
+   ASSERT_EQ(frame.shares.size(), 128U);
+   ASSERT_EQ(frame.edges.size(),  129U);
+   struct Reference {
+      std::size_t  index;
+      std::int64_t count;
+   };
+   const Reference references[] = { {   0, 2999   }, {  42, 4187   }, {  47, 8208   },
+      {  58, 57791  }, {  64, 115924 }, {  69, 57822  },
+      {  80, 8215   }, {  85, 4054   }, { 127, 2944   } };
+   std::int64_t    total = 0;
+   double shareSum       = 0.0;
+
+   for (std::size_t index = 0; index < frame.counts.size(); ++index) {
+      total    += frame.counts[index];
+      shareSum += frame.shares[index];
+   }
+   EXPECT_EQ(total, 262144);
+   EXPECT_NEAR(shareSum, 100.0, 1e-9);
+
+   std::vector<std::int64_t> expected(128, 0);
+
+   for (const Reference& reference : references) {
+      expected[reference.index] = reference.count;
+   }
+
+   for (std::size_t index = 0; index < frame.counts.size(); ++index) {
+      EXPECT_EQ(frame.counts[index], expected[index]) << "корзина " << index;
+   }
+
+   // Границы корзин равномерны и симметричны относительно нуля
+   EXPECT_NEAR(frame.edges.front(), -frame.limit, 1e-12);
+   EXPECT_NEAR(frame.edges.back(),  frame.limit,  1e-12);
+   EXPECT_NEAR(frame.edges[64],     0.0,          1e-12);
+}
+
+// Ряды и правила отображения выводятся в ответе
+TEST(FrameLevelL1OC, Test18_JsonCarriesSeriesAndRenderRules) {
+   const StreamRequest request = configuration(1, 3);
+   const std::string   json    = levelFrameJson(computeLevelFrame(request), request);
+
+   EXPECT_TRUE(contains(json, "\"kind\": \"level\""));
+   EXPECT_TRUE(contains(json, "\"quadrature\": \"I\""));
+   EXPECT_TRUE(contains(json, "\"sampleCount\": 262144"));
+   EXPECT_TRUE(contains(json, "\"binCount\": 128"));
+   EXPECT_TRUE(contains(json, "\"limitRule\""));
+   EXPECT_TRUE(contains(json, "\"crestFactorDb\""));
+   EXPECT_TRUE(contains(json, "\"rule\": \"binUniform\""));
+   EXPECT_TRUE(contains(json, "\"edge\""));
+   EXPECT_TRUE(contains(json, "\"count\""));
+   EXPECT_TRUE(contains(json, "\"sharePercent\""));
+   EXPECT_FALSE(contains(json, "nan"));
+   EXPECT_FALSE(contains(json, "inf"));
+}
+
+// Изображение по шаблону Р3: показатели в поле кадра, идентификатора kind и строки
+// происхождения нет
+TEST(FrameLevelL1OC, Test19_SvgFollowsFrameTemplate) {
+   const StreamRequest request = configuration(1, 3);
+   const std::string   image   = levelFrameSvg(computeLevelFrame(request), request);
+
+   EXPECT_TRUE(contains(image, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 960 540\""));
+   EXPECT_TRUE(contains(image, "<title>Гистограмма мгновенных значений суммарного сигнала</title>"));
+   EXPECT_TRUE(contains(image, "Значение отсчёта I"));
+   EXPECT_TRUE(contains(image, "Доля отсчётов, %"));
+   EXPECT_TRUE(contains(image, "корзин 128"));
+   EXPECT_TRUE(contains(image, "среднеквадратичное значение = "));
+   EXPECT_TRUE(contains(image, "пик-фактор = "));
+   EXPECT_TRUE(contains(image, "Граница шкалы η·ΣA_j"));
+   EXPECT_TRUE(contains(image, "</svg>"));
+
+   EXPECT_FALSE(contains(image, ">Кадр level"));
+   EXPECT_FALSE(contains(image, "signal-service-l1oc 1.0 ·"));
+   EXPECT_FALSE(contains(image, "nan"));
+}
+
+// Кадры не зависят от порядка обращений и воспроизводятся побитно на тех же параметрах
+TEST(FramesL1OC, Test20_Reproducible) {
+   const StreamRequest waveform = configuration(5, 5);
+
+   EXPECT_EQ(waveformFrameSvg(computeWaveformFrame(waveform), waveform),
+             waveformFrameSvg(computeWaveformFrame(waveform), waveform));
+   const StreamRequest level = configuration(1, 2);
+
+   EXPECT_EQ(levelFrameSvg(computeLevelFrame(level), level),
+             levelFrameSvg(computeLevelFrame(level), level));
 }

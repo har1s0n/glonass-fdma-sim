@@ -51,6 +51,8 @@ glonass::SourceConfigL1OC sourceConfigOf(const StreamRequest& request);
 std::size_t               bytesPerSample(SampleFormat format) noexcept;
 const char*               formatName(SampleFormat format) noexcept;
 
+double                    peakBound(const std::vector<double>& amplitudes) noexcept;
+
 double                    quantizationScaleCs16(const std::vector<double>& amplitudes) noexcept;
 
 class StreamSession {

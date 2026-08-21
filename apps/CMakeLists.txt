@@ -44,6 +44,10 @@ if(GLONASS_BUILD_SERVICE)
         signal_service_l1oc/svg_canvas.cpp
         signal_service_l1oc/frame_psd.h
         signal_service_l1oc/frame_psd.cpp
+        signal_service_l1oc/frame_waveform.h
+        signal_service_l1oc/frame_waveform.cpp
+        signal_service_l1oc/frame_level.h
+        signal_service_l1oc/frame_level.cpp
         signal_service_l1oc/tcp_stream_session.h
         signal_service_l1oc/tcp_stream_session.cpp)
     # iq_convert — примитивы квантования CS16, общие с конвертером записи (решение 6)
