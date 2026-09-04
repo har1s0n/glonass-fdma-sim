@@ -12,9 +12,11 @@
 #include "error_response.h"
 #include "frame_correlation.h"
 #include "frame_level.h"
+#include "frame_navline.h"
 #include "frame_psd.h"
 #include "frame_waveform.h"
 #include "json_writer.h"
+#include "panel_page.h"
 #include "service_version.h"
 #include "state_metrics.h"
 #include "stream_session.h"
@@ -25,6 +27,7 @@ namespace {
 constexpr const char* contentTypeJson        = "application/json; charset=utf-8";
 constexpr const char* contentTypeOctetStream = "application/octet-stream";
 constexpr const char* contentTypeSvg         = "image/svg+xml; charset=utf-8";
+constexpr const char* contentTypeHtml        = "text/html; charset=utf-8";
 
 thread_local std::uint64_t threadRequestId = 0;
 
@@ -144,6 +147,13 @@ void Service::registerRoutes() {
          response.set_content(json.str(), contentTypeJson);
       });
 
+   // Страница стенда. Разметка, стиль и сценарий содержатся в теле ответа; обращения
+   // страницы идут к точкам /v1/* того же источника, поэтому ни каталог статики, ни
+   // заголовки междоменных запросов не требуются.
+   server_.Get("/panel", [](const httplib::Request&, httplib::Response& response) {
+         response.set_content(panelPageHtml(), contentTypeHtml);
+      });
+
    // Режим А — показатели состояния. Ядро модели не запускается:
    // показатели выводятся аналитически из конфигурации и модельного времени
    server_.Get("/v1/state", [](const httplib::Request& request, httplib::Response& response) {
@@ -250,7 +260,7 @@ void Service::registerRoutes() {
          }
 
          if ((kind != "psd") && (kind != "waveform") && (kind != "level")
-             && (kind != "acf") && (kind != "ccf")) {
+             && (kind != "acf") && (kind != "ccf") && (kind != "navline")) {
             respondWithError(response, notFound("кадр не обслуживается: " + kind));
             return;
          }
@@ -276,6 +286,10 @@ void Service::registerRoutes() {
                const CcfFrame frame = computeCcfFrame(parsed);
 
                body = asImage ? ccfFrameSvg(frame, parsed) : ccfFrameJson(frame, parsed);
+            } else if (kind == "navline") {
+               const NavLineFrame frame = computeNavLineFrame(parsed);
+
+               body = asImage ? navLineFrameSvg(frame, parsed) : navLineFrameJson(frame, parsed);
             } else {
                const LevelFrame frame = computeLevelFrame(parsed);
 

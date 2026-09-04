@@ -34,6 +34,8 @@ if(GLONASS_BUILD_SERVICE)
         signal_service_l1oc/service_version.h
         signal_service_l1oc/error_response.h
         signal_service_l1oc/json_writer.h
+        signal_service_l1oc/panel_page.h
+        signal_service_l1oc/panel_page.cpp
         signal_service_l1oc/state_metrics.h
         signal_service_l1oc/state_metrics.cpp
         signal_service_l1oc/stream_session.h
@@ -48,6 +50,8 @@ if(GLONASS_BUILD_SERVICE)
         signal_service_l1oc/frame_waveform.cpp
         signal_service_l1oc/frame_level.h
         signal_service_l1oc/frame_level.cpp
+        signal_service_l1oc/frame_navline.h
+        signal_service_l1oc/frame_navline.cpp
         signal_service_l1oc/frame_correlation.h
         signal_service_l1oc/frame_correlation.cpp
         signal_service_l1oc/tcp_stream_session.h

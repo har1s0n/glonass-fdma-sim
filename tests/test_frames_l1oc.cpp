@@ -1,10 +1,12 @@
 #include "fft_radix2.h"
 #include "frame_correlation.h"
 #include "frame_level.h"
+#include "frame_navline.h"
 #include "frame_psd.h"
 #include "frame_waveform.h"
 #include "svg_canvas.h"
 
+#include "glonass/nav_message_l1oc.h"
 #include "glonass/ranging_code_l1oc.h"
 #include "glonass/types.h"
 #include "request_params_l1oc.h"
@@ -14,6 +16,8 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -32,6 +36,7 @@ using glonass_service::ccfFrameSvg;
 using glonass_service::computeAcfFrame;
 using glonass_service::computeCcfFrame;
 using glonass_service::computeLevelFrame;
+using glonass_service::computeNavLineFrame;
 using glonass_service::computePsdFrame;
 using glonass_service::computeWaveformFrame;
 using glonass_service::dftDirect;
@@ -39,6 +44,9 @@ using glonass_service::fftRadix2;
 using glonass_service::LevelFrame;
 using glonass_service::levelFrameJson;
 using glonass_service::levelFrameSvg;
+using glonass_service::NavLineFrame;
+using glonass_service::navLineFrameJson;
+using glonass_service::navLineFrameSvg;
 using glonass_service::numberRu;
 using glonass_service::PsdFrame;
 using glonass_service::psdFrameJson;
@@ -103,6 +111,36 @@ StreamRequest configuration(int first, int last) {
    request.amplitudes    = std::vector<double> (request.satellites.size(), 1.0);
    request.initialPhases = std::vector<double> (request.satellites.size(), 0.0);
    return request;
+}
+
+// Конфигурация с привязкой: J = {1…3}, заданные Fs и n₀
+StreamRequest configurationAt(std::int64_t sampleRate, std::int64_t startSample) {
+   StreamRequest request = configuration(1, 3);
+
+   request.sampleRate  = sampleRate;
+   request.startSample = startSample;
+   return request;
+}
+
+// Символы строки текстом: сверка с независимым счётом посимвольно
+std::string symbolText(const std::vector<int>& symbols, std::size_t from, std::size_t count) {
+   std::string text;
+
+   for (std::size_t i = from; (i < symbols.size()) && (i < from + count); ++i) {
+      text += static_cast<char> ('0' + symbols[i]);
+   }
+   return text;
+}
+
+// Единиц среди символов полуинтервала [from; to)
+int onesWithin(const std::vector<int>& symbols, double from, double to) {
+   int count = 0;
+
+   for (std::size_t i = static_cast<std::size_t> (from);
+        (i < symbols.size()) && (static_cast<double> (i) < to); ++i) {
+      count += symbols[i];
+   }
+   return count;
 }
 
 // Детерминированная последовательность для сверки преобразований
@@ -765,4 +803,163 @@ TEST(FrameCcfL1OC, Test30_SvgFollowsFrameTemplate) {
    EXPECT_FALSE(contains(image, ">Кадр ccf"));
    EXPECT_FALSE(contains(image, "signal-service-l1oc 1.0 ·"));
    EXPECT_FALSE(contains(image, "nan"));
+}
+
+// ───────────────────── кадр строки навигационного сообщения ─────────────────────
+
+// Строка и её показатели против независимого счёта (Python, frame_navline_l1oc.py): нормальная
+// строка при нулевой ЦИ, состояние регистра СК при запуске нулевое (§ 0.1 поз.41).
+// Символы 12…23 — контрольное значение ИКД п. 4.2.2.1
+TEST(FrameNavLineL1OC, Test31_LineMatchesIndependentComputation) {
+   const NavLineFrame frame = computeNavLineFrame(configuration(1, 3));
+
+   EXPECT_EQ(frame.lineType,     glonass::LineTypeL1OC::normal);
+   EXPECT_EQ(frame.infoBits,     222);
+   EXPECT_EQ(frame.lineBitCount, 250);
+   EXPECT_EQ(frame.lineLength,   500);
+   EXPECT_EQ(static_cast<int> (frame.lineSymbols.size()), 500);
+
+   EXPECT_EQ(symbolText(frame.lineSymbols, 0, 24), "001101000101000111011010");
+   EXPECT_EQ(symbolText(frame.lineSymbols, 12, 12), "000111011010");
+   EXPECT_EQ(symbolText(frame.lineSymbols, 476, 24), "001011101100010001010101");
+
+   EXPECT_EQ(frame.onesCount,   32);
+   EXPECT_EQ(frame.transitions, 39);
+
+   const glonass::ConvStateL1OC expectedState = { 0, 0, 1, 0, 1, 1 };
+
+   EXPECT_EQ(frame.convStateOut, expectedState);
+
+   EXPECT_DOUBLE_EQ(frame.symbolDurationMs, 4.0);
+   EXPECT_DOUBLE_EQ(frame.lineDurationS,    2.0);
+}
+
+// Зоны полей на оси символов СК: бит t информационного блока даёт символы 2t, 2t+1.
+// Единицы сосредоточены в СМВ и ЦК; в зоне ЦИ их пять — след памяти кодера после СМВ
+TEST(FrameNavLineL1OC, Test32_FieldsMatchLineStructure) {
+   const NavLineFrame frame = computeNavLineFrame(configuration(1, 3));
+
+   ASSERT_EQ(frame.fields.size(), 3U);
+
+   const double from[3] = { 0.0, 24.0, 468.0 };
+   const double to[3]   = { 24.0, 468.0, 500.0 };
+   const int bits[3]    = { 12, 222, 16 };
+   const char* name[3]  = { "СМВ", "ЦИ", "ЦК" };
+   const int ones[3]    = { 11, 5, 16 };
+
+   for (std::size_t index = 0; index < frame.fields.size(); ++index) {
+      EXPECT_DOUBLE_EQ(frame.fields[index].from, from[index]);
+      EXPECT_DOUBLE_EQ(frame.fields[index].to,   to[index]);
+      EXPECT_EQ(frame.fields[index].bits, bits[index]);
+      EXPECT_STREQ(frame.fields[index].name, name[index]);
+      EXPECT_EQ(onesWithin(frame.lineSymbols, frame.fields[index].from, frame.fields[index].to),
+                ones[index]);
+   }
+}
+
+// Координаты строки от привязки: ℓ, w[n₀] и фаза символа против независимого счёта.
+// Слой содержания сервиса выдаёт нулевую ЦИ на любой ℓ, поэтому кадр при разных n₀
+// отличается только положением отметки
+TEST(FrameNavLineL1OC, Test33_CoordinatesMatchIndependentComputation) {
+   struct Case {
+      std::int64_t sampleRate;
+      std::int64_t startSample;
+      std::int64_t lineIndex;
+      int          convSymbolIndex;
+      double       symbolPhase;
+   };
+   const Case cases[] = { { 20000000, 0, 0, 0, 0.0 },
+                          { 20000000, 12345, 0, 0, 0.154312 },
+                          { 20000000, 20000000, 0, 250, 0.0 },
+                          { 20000000, 45000000, 1, 62, 0.5 },
+                          { 20000000, 123456789, 3, 43, 0.209863 },
+                          { 4092000, 1234567, 0, 75, 0.425648 },
+                          { 5000000, 999999999, 99, 499, 0.999950 } };
+   const NavLineFrame reference = computeNavLineFrame(configuration(1, 3));
+
+   for (const Case& item : cases) {
+      const NavLineFrame frame =
+         computeNavLineFrame(configurationAt(item.sampleRate, item.startSample));
+
+      EXPECT_EQ(frame.lineIndex,       item.lineIndex);
+      EXPECT_EQ(frame.convSymbolIndex, item.convSymbolIndex);
+      EXPECT_NEAR(frame.symbolPhase, item.symbolPhase, 1.0e-6);
+      EXPECT_EQ(frame.lineSymbols, reference.lineSymbols);
+   }
+}
+
+// n₀·R_с вне разрядности счётчика символов: отказ того же разряда, что в режиме А (400)
+TEST(FrameNavLineL1OC, Test34_RejectsStartSampleBeyondSymbolCounter) {
+   const std::int64_t limit = std::numeric_limits<std::int64_t>::max() / glonass::symbolRateL1OC;
+
+   try {
+      computeNavLineFrame(configurationAt(20000000, limit + 1));
+      FAIL() << "ожидался отказ по разрядности счётчика символов";
+   } catch (const glonass_params::ParamError& error) {
+      EXPECT_EQ(error.kind(),  glonass_params::RejectKind::badValue);
+      EXPECT_EQ(error.field(), "n0");
+      EXPECT_TRUE(contains(error.what(), "вне разрядности счётчика символов"));
+   }
+}
+
+// Ряды и правила отображения выводятся в ответе: без них кадр невоспроизводим (Р3.17)
+TEST(FrameNavLineL1OC, Test35_JsonCarriesSeriesAndRenderRules) {
+   const StreamRequest request = configurationAt(20000000, 45000000);
+   const std::string   json    = navLineFrameJson(computeNavLineFrame(request), request);
+
+   EXPECT_TRUE(contains(json, "\"kind\": \"navline\""));
+   EXPECT_TRUE(contains(json, "\"lineIndex\": 1"));
+   EXPECT_TRUE(contains(json, "\"lineType\": \"normal\""));
+   EXPECT_TRUE(contains(json, "\"smvBits\": 12"));
+   EXPECT_TRUE(contains(json, "\"infoBits\": 222"));
+   EXPECT_TRUE(contains(json, "\"lineBits\": 250"));
+   EXPECT_TRUE(contains(json, "\"lineLength\": 500"));
+   EXPECT_TRUE(contains(json, "\"symbolRateHz\": 250"));
+   EXPECT_TRUE(contains(json, "\"convSymbolIndex\": 62"));
+   EXPECT_TRUE(contains(json, "\"convStateOut\": [0, 0, 1, 0, 1, 1]"));
+   EXPECT_TRUE(contains(json, "\"onesCount\": 32"));
+   EXPECT_TRUE(contains(json, "\"transitions\": 39"));
+   EXPECT_TRUE(contains(json, "\"icdClause\": \"4.2.2.1, 4.4\""));
+   EXPECT_TRUE(contains(json, "\"levelRule\": \"уровень 1 − 2·b_line\""));
+   EXPECT_TRUE(contains(json, "\"marker\": 62"));
+   EXPECT_TRUE(contains(json, "\"name\": \"СМВ\""));
+   EXPECT_TRUE(contains(json, "\"name\": \"ЦИ\""));
+   EXPECT_TRUE(contains(json, "\"name\": \"ЦК\""));
+   EXPECT_TRUE(contains(json, "\"symbol\": [0, 0, 1, 1, 0, 1"));
+   EXPECT_FALSE(contains(json, "nan"));
+   EXPECT_FALSE(contains(json, ": inf")); // «inf» как значение: ключ infoBits несёт ту же подстроку
+}
+
+// Изображение строится по шаблону Р3: заголовок содержательный, идентификатора kind нет,
+// строки происхождения нет; состав при |J| ≤ 4 выводится перечислением
+TEST(FrameNavLineL1OC, Test36_SvgFollowsFrameTemplate) {
+   const StreamRequest request = configurationAt(20000000, 45000000);
+   const std::string   image   = navLineFrameSvg(computeNavLineFrame(request), request);
+
+   EXPECT_TRUE(contains(image, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 960 540\""));
+   EXPECT_TRUE(contains(image,
+                        "<title>Строка навигационного сообщения: символы свёрточного кода</title>"));
+   EXPECT_TRUE(contains(image, "J = {1, 2, 3}"));
+   EXPECT_TRUE(contains(image, "Строка ℓ = 1"));
+   EXPECT_TRUE(contains(image, "нормальная строка"));
+   EXPECT_TRUE(contains(image, "w[n₀] = 62"));
+   EXPECT_TRUE(contains(image, "Символ свёрточного кода в строке"));
+   EXPECT_TRUE(contains(image, "Символ b_line в алфавите {−1, +1}"));
+   EXPECT_TRUE(contains(image, ">СМВ<"));
+   EXPECT_TRUE(contains(image, ">ЦК<"));
+   EXPECT_TRUE(contains(image, "</svg>"));
+
+   EXPECT_FALSE(contains(image, ">Кадр navline"));
+   EXPECT_FALSE(contains(image, "signal-service-l1oc 1.0 ·"));
+   EXPECT_FALSE(contains(image, "nan"));
+}
+
+// Кадр не зависит от порядка обращений и воспроизводится побитно на тех же параметрах
+TEST(FrameNavLineL1OC, Test37_Reproducible) {
+   const StreamRequest request = configurationAt(20000000, 123456789);
+
+   EXPECT_EQ(navLineFrameSvg(computeNavLineFrame(request), request),
+             navLineFrameSvg(computeNavLineFrame(request), request));
+   EXPECT_EQ(navLineFrameJson(computeNavLineFrame(request), request),
+             navLineFrameJson(computeNavLineFrame(request), request));
 }

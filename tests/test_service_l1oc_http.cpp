@@ -2,6 +2,9 @@
 #include "service_config.h"
 #include "service_version.h"
 
+#include "glonass/types.h"
+#include "request_params_l1oc.h"
+
 #include <gtest/gtest.h>
 #include <httplib.h>
 #include <atomic>
@@ -286,7 +289,7 @@ TEST_F(ServiceHttp, Test20_FramePsdGivesSvgImage) {
 // Кадры набора, не введённые реализацией, дают 404 по общей модели ошибок.
 TEST_F(ServiceHttp, Test21_UnknownFrameKindGivesNotFound) {
    httplib::Client client(localHost, port_);
-   const auto response = client.Get("/v1/frames/navline");
+   const auto response = client.Get("/v1/frames/spectrum");
 
    ASSERT_TRUE(response);
    EXPECT_EQ(response->status, 404);
@@ -326,6 +329,64 @@ TEST_F(ServiceHttp, Test23_CorrelationFramesFollowComposition) {
    ASSERT_TRUE(single);
    EXPECT_EQ(single->status, 422);
    EXPECT_TRUE(contains(single->body, "\"error\": \"unprocessable\""));
+}
+
+// Страница стенда отдаётся самим сервисом одним обращением: разметка, стиль и сценарий
+// содержатся в теле ответа
+TEST_F(ServiceHttp, Test24_PanelPageServedAsHtml) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_EQ(response->status,                           200);
+   EXPECT_EQ(response->get_header_value("Content-Type"), "text/html; charset=utf-8");
+   EXPECT_TRUE(contains(response->body, "<!DOCTYPE html>"));
+   EXPECT_TRUE(contains(response->body, "Панель модели навигационного сигнала L1OC"));
+}
+
+// Три компоновки переключаются на самой странице
+TEST_F(ServiceHttp, Test25_PanelPageCarriesThreeLayouts) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_TRUE(contains(response->body, "data-layout=\"overview\""));
+   EXPECT_TRUE(contains(response->body, "data-layout=\"detail\""));
+   EXPECT_TRUE(contains(response->body, "data-layout=\"compare\""));
+   EXPECT_TRUE(contains(response->body, "Обзор"));
+   EXPECT_TRUE(contains(response->body, "Разбор"));
+   EXPECT_TRUE(contains(response->body, "Сравнение"));
+}
+
+// Внешних ресурсов страница не загружает и обращается только к точкам того же источника:
+// сеть комплекса замкнута, порт наружу не публикуется (решение 10 контракта)
+TEST_F(ServiceHttp, Test26_PanelPageHasNoExternalResources) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_FALSE(contains(response->body, "://"));
+   EXPECT_FALSE(contains(response->body, "<link"));
+   EXPECT_TRUE(contains(response->body, "/v1/info"));
+   EXPECT_TRUE(contains(response->body, "/v1/state?"));
+   EXPECT_TRUE(contains(response->body, "/v1/frames/"));
+}
+
+// Числовые параметры сигнала на странице не дублируются: опорная частота, нижняя граница ряда
+// Fs (= 2·B_model) и значение по умолчанию подставляются из общих констант модели
+TEST_F(ServiceHttp, Test27_PanelPageTakesConstantsFromModel) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_TRUE(contains(response->body,
+                        "const carrierFreqHz = " + std::to_string(glonass::carrierFreqL1OC)));
+   EXPECT_TRUE(contains(response->body,
+                        "const sampleRateSteps = ["
+                        + std::to_string(2 * glonass::modelBandwidthL1OC)));
+   EXPECT_TRUE(contains(response->body,
+                        "const defaultSampleRate = "
+                        + std::to_string(glonass_params::defaultSampleRate)));
 }
 
 TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
