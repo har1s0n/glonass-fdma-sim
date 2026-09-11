@@ -75,9 +75,32 @@ body.layout-detail .fields,body.layout-compare .fields{
 .tile.wide .v{font-size:13px;font-weight:400;color:var(--warn)}
 
 #grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(450px,1fr))}
-.slot{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px;
-  min-height:140px;display:flex;align-items:center;justify-content:center}
+.slot{position:relative;background:var(--card);border:1px solid var(--line);border-radius:6px;
+  padding:6px;min-height:140px;display:flex;align-items:center;justify-content:center}
 .slot img{width:100%;height:auto;display:block;border-radius:4px}
+.canvas{width:100%;display:flex;align-items:center;justify-content:center}
+
+.help{position:absolute;top:9px;right:9px;width:20px;height:20px;padding:0;z-index:4;
+  border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--muted);
+  font:600 12px/1 "Helvetica Neue",Helvetica,Arial,sans-serif;cursor:help}
+.help:hover,.slot.tipOn .help{background:var(--accent);border-color:var(--accent);color:#fff}
+.tip{position:absolute;top:35px;right:9px;width:440px;max-width:calc(100% - 18px);z-index:5;
+  text-align:left;cursor:default;
+  background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+  box-shadow:0 6px 18px rgba(16,21,28,.14);
+  opacity:0;visibility:hidden;transform:translateY(-4px);
+  transition:opacity .12s ease,transform .12s ease}
+.help:hover + .tip,.help:focus-visible + .tip,.tip:hover,.slot.tipOn .tip{
+  opacity:1;visibility:visible;transform:none}
+.tip::before{content:"";position:absolute;top:-5px;right:13px;width:8px;height:8px;
+  background:var(--card);border-left:1px solid var(--line);border-top:1px solid var(--line);
+  transform:rotate(45deg)}
+.tipHead{display:inline-block;margin-bottom:7px;padding:2px 7px;border-radius:4px;
+  background:var(--soft);color:var(--accent);font-size:11px;font-weight:600;letter-spacing:.03em}
+.tipText{margin:0 0 6px;font-size:12.5px;line-height:1.45;color:var(--fg)}
+.tipText:last-child{margin-bottom:0}
+.tipWhy{color:var(--muted)}
+.tipWhy b{color:var(--fg);font-weight:600}
 .slot.busy{opacity:.5}
 #grid .slot{cursor:pointer}
 #single{display:grid;justify-items:center}
@@ -153,14 +176,15 @@ body.layout-detail .fields,body.layout-compare .fields{
 <div class="tiles" id="metrics"></div>
 <div class="segmented" id="tabs"></div>
 <div id="grid"></div>
-<div id="single"><div class="slot" id="slotOne"></div></div>
+<div id="single"><div class="slot" id="slotOne"><div class="canvas"></div></div></div>
 
 <div id="compare">
 <section class="col">
 <div class="colhead"><span>Опорная конфигурация</span>
 <button type="button" class="act" id="pin">Взять текущую</button></div>
-<div class="slot" id="slotRef"><div class="hint">опорная конфигурация не задана</div></div>
-<div class="params" id="refParams">—</div>
+<div class="slot" id="slotRef"><div class="canvas">
+<div class="hint">опорная конфигурация не задана</div></div></div>
+<div class="params" id="refParams">не задана</div>
 <div class="tiles" id="refMetrics"></div>
 </section>
 <section class="col diffs">
@@ -169,8 +193,8 @@ body.layout-detail .fields,body.layout-compare .fields{
 </section>
 <section class="col">
 <div class="colhead"><span>Текущая конфигурация</span></div>
-<div class="slot" id="slotCur"></div>
-<div class="params" id="curParams">—</div>
+<div class="slot" id="slotCur"><div class="canvas"></div></div>
+<div class="params" id="curParams">строится</div>
 <div class="tiles" id="curMetrics"></div>
 </section>
 </div>
@@ -182,13 +206,41 @@ body.layout-detail .fields,body.layout-compare .fields{
 
 // Часть страницы после блока числовых констант сценария
 constexpr const char* pageTail = R"PANEL(
+// Подсказка кадра: наблюдаемый блок тракта, что изображено и зачем кадр на панели.
+// Набор из шести кадров определён по критерию покрытия (контракт § 5.4): удаление любого
+// кадра оставляет хотя бы один блок тракта А–Д ненаблюдаемым.
+// Тире в тексте страницы не применяется по требованию к оформлению.
 const kinds = [
-  { id: 'psd',      tab: 'СПМ',           alt: 'Спектральная плотность мощности' },
-  { id: 'waveform', tab: 'Осциллограмма', alt: 'Осциллограмма квадратур' },
-  { id: 'acf',      tab: 'АКФ',           alt: 'Периодическая автокорреляционная функция дальномерного кода' },
-  { id: 'ccf',      tab: 'ВКФ',           alt: 'Огибающая периодической взаимнокорреляционной функции ансамбля' },
-  { id: 'navline',  tab: 'Строка НС',     alt: 'Кадр строки навигационного сообщения' },
-  { id: 'level',    tab: 'Гистограмма',   alt: 'Гистограмма мгновенных значений' }
+  { id: 'psd', tab: 'СПМ', alt: 'Спектральная плотность мощности',
+    block: 'Блоки В, Г_L1OC, Д_L1OC',
+    what: 'Оценка спектральной плотности мощности по отсчётам модели. Ось частот отсчитывается от опорной частоты f₀; штриховые линии показывают полосу модели B_model = 2·f_T1 = 2,046 МГц, то есть границу главного лепестка по первым нулям.',
+    why: 'по занятой полосе и положению спектра видно действие несущей, модуляции и суммирования состава; смещение спектра отвечает расстройке Δf.',
+    look: 'между штриховыми линиями лежит главный лепесток, за ними боковые со спадом 20 дБ на декаду. Условие представимости В.2 требует |Δf| + B_model ≤ Fs/2, отсюда нижняя граница Fs = 4,092 МГц.' },
+  { id: 'waveform', tab: 'Осциллограмма', alt: 'Осциллограмма квадратур',
+    block: 'Блоки А_L1OC, В, Г_L1OC',
+    what: 'Квадратуры I и Q в окне 16 чипов уплотнения; чип уплотнения длится 977,5 нс. Заливкой отмечены чипы компоненты L1OCp.',
+    why: 'показывает почиповое временное уплотнение вблизи: знаки чипов дальномерного кода и перетекание мощности из I в Q при повороте начальной фазы φ₀.',
+    look: 'на чиповом интервале передаётся ровно одна компонента, компоненты не суммируются. При Δf = 0 и φ₀ = 0 квадратура Q нулевая; поворот φ₀ переливает в неё мощность, не меняя знаков чипов.' },
+  { id: 'acf', tab: 'АКФ', alt: 'Периодическая автокорреляционная функция дальномерного кода',
+    block: 'Блок А_L1OC',
+    what: 'Периодическая автокорреляция дальномерного кода: совпадение кода с самим собой, сдвинутым на τ чипов. При τ = 0 совпадают все N чипов, это главный лепесток; при τ ≠ 0 остаются боковые.',
+    why: 'кадр воспроизводит работу коррелятора приёмника, который перебирает задержку и берёт ту, где корреляция максимальна; превышение главного лепестка над боковыми задаёт запас различения истинной задержки от ложной.',
+    look: 'максимум бокового лепестка: ДК_L1OCd (N = 1023) −23,939 дБ, ДК_L1OCp (N = 4092) −24,780 дБ. Кадр считается по таблицам кодов, поэтому Fs, Δf, n₀, φ₀ и амплитуды его не меняют. Код берётся у первого НКА состава: чтобы сменить его, включите «только выбранный НКА».' },
+  { id: 'ccf', tab: 'ВКФ', alt: 'Огибающая периодической взаимнокорреляционной функции ансамбля',
+    block: 'Блок А_L1OC',
+    what: 'Огибающая взаимной корреляции: максимум |R(τ)| по всем парам состава. Показывает, насколько чужой код похож на искомый при любом сдвиге.',
+    why: 'при кодовом разделении все НКА занимают одну полосу и разделяются только корреляцией; неподавленный остаток и есть помеха множественного доступа.',
+    look: 'максимум ВКФ: ДК_L1OCd −23,939 дБ, ДК_L1OCp −24,074 дБ; норма [ИКД-общ] п. 5.1.5 ограничивает средний квадрат, и ансамбль лежит на границе Велча. Кадр зависит только от состава J (пар |J|·(|J|−1)/2); при |J| = 1 пар нет и кадр отклоняется.' },
+  { id: 'navline', tab: 'Строка НС', alt: 'Кадр строки навигационного сообщения',
+    block: 'Блок Б_L1OC',
+    what: 'Символы строки на выходе свёрточного кода (133,171), зоны поля СМВ и проверочных бит ЦК, отметка текущего символа w[n₀].',
+    why: 'единственный кадр навигационного сообщения: показывает, в какую строку и в какой её символ попадает привязка по времени n₀.',
+    look: 'символ свёрточного кода длится 4 мс, нормальная строка содержит L_с = 500 символов, то есть 2 с модельного времени. Ползунок времени двигает отметку по строке, и каждые 2 с сменяется номер строки ℓ.' },
+  { id: 'level', tab: 'Гистограмма', alt: 'Гистограмма мгновенных значений',
+    block: 'Блок Д_L1OC',
+    what: 'Распределение мгновенных значений квадратуры I после нормировки: 262 144 отсчёта, 128 корзин. Штриховая линия показывает границу шкалы ±η·ΣA_j, опорные линии отмечают ±среднеквадратичное значение.',
+    why: 'нормировка η = 1/√(ΣA_j²) приводит среднюю мощность суммы к единице при любом составе: без неё выход менял бы масштаб с каждой сменой состава, а масштаб квантования CS16 пришлось бы подбирать заново.',
+    look: 'при полном составе сумма 24 знакопеременных вкладов даёт колокол, пик отстоит от среднеквадратичного значения на 14,8 дБ. При одиночном НКА остаются два уровня ±1 и пик-фактор 0 дБ.' }
 ];
 const lineTypeNames = { normal: 'нормальная', anomalous1: 'аномальная 1', anomalous2: 'аномальная 2' };
 const subDigits = '₀₁₂₃₄₅₆₇₈₉';
@@ -318,7 +370,7 @@ function tile(box, key, value, kind) {
   box.appendChild(item);
 }
 
-// Показатели — только точка режима А: они выводятся аналитически и стоят единицы миллисекунд.
+// Показатели берёт только точка режима А: они выводятся аналитически и стоят единицы
 // Величины прогонного происхождения (пик-фактор, граница шкалы, СКЗ квадратур) читаются с кадра.
 function renderTiles(box, state, parameters) {
   box.textContent = '';
@@ -360,18 +412,82 @@ function renderDiff() {
   tile(box, 'Δ отсчёта n₀', signedRu(currentState.n - referenceState.n));
 }
 
+// Поле изображения внутри слота: значок подсказки и карточка лежат рядом и не стираются
+// при перерисовке кадра
+function canvasOf(slot) {
+  return slot.querySelector('.canvas') || slot;
+}
+
+// Значок «?» в углу кадра. Наведение и фокус раскрывают карточку средствами стиля, нажатие
+// удерживает её раскрытой, иначе на сенсорном экране подсказка недоступна
+function attachHelp(slot) {
+  const button = document.createElement('button');
+  const tip = document.createElement('div');
+  button.type = 'button';
+  button.className = 'help';
+  button.textContent = '?';
+  button.setAttribute('aria-label', 'пояснение к кадру');
+  button.setAttribute('aria-expanded', 'false');
+  button.onclick = function (event) {
+    event.stopPropagation(); // иначе сработал бы переход в разбор по клику на кадре
+    button.setAttribute('aria-expanded', slot.classList.toggle('tipOn') ? 'true' : 'false');
+  };
+  tip.className = 'tip';
+  tip.setAttribute('role', 'tooltip');
+  tip.onclick = function (event) { event.stopPropagation(); };
+  slot.appendChild(button);
+  slot.appendChild(tip);
+}
+
+function fillTip(slot, kind) {
+  const tip = slot.querySelector('.tip');
+  if (!tip) { return; }
+  const head = document.createElement('div');
+  const what = document.createElement('p');
+  head.className = 'tipHead';
+  head.textContent = kind.block;
+  what.className = 'tipText';
+  what.textContent = kind.what;
+  tip.textContent = '';
+  tip.appendChild(head);
+  tip.appendChild(what);
+  tip.appendChild(labelledText('Зачем: ', kind.why));
+  tip.appendChild(labelledText('Смотреть: ', kind.look));
+}
+
+function labelledText(label, value) {
+  const paragraph = document.createElement('p');
+  const marker = document.createElement('b');
+  paragraph.className = 'tipText tipWhy';
+  marker.textContent = label;
+  paragraph.appendChild(marker);
+  paragraph.appendChild(document.createTextNode(value));
+  return paragraph;
+}
+
+function closeTips() {
+  const opened = document.querySelectorAll('.slot.tipOn');
+  for (let i = 0; i < opened.length; ++i) {
+    const button = opened[i].querySelector('.help');
+    opened[i].classList.remove('tipOn');
+    if (button) { button.setAttribute('aria-expanded', 'false'); }
+  }
+}
+
 function showReject(slot, status, message) {
   const box = document.createElement('div');
+  const target = canvasOf(slot);
   box.className = 'reject';
   box.textContent = (status > 0) ? ('кадр отклонён, код ' + status + ': ' + message)
                                  : ('обращение не выполнено: ' + message);
-  slot.textContent = '';
-  slot.appendChild(box);
+  target.textContent = '';
+  target.appendChild(box);
 }
 
 // Кадр запрашивается изображением и вставляется через <img>: каждый SVG остаётся отдельным
 // документом, поэтому одинаковые внутренние идентификаторы шести кадров не сталкиваются.
 async function loadFrame(slot, kind, query, token) {
+  fillTip(slot, kind);
   slot.classList.add('busy');
   try {
     const response = await fetch('/v1/frames/' + kind.id + '.svg?' + query);
@@ -387,11 +503,12 @@ async function loadFrame(slot, kind, query, token) {
     if (token !== frameToken) { return; }
     const objectUrl = URL.createObjectURL(blob);
     const image = new Image();
+    const target = canvasOf(slot);
     image.alt = kind.alt;
     image.onload = function () { URL.revokeObjectURL(objectUrl); };
     image.src = objectUrl;
-    slot.textContent = '';
-    slot.appendChild(image);
+    target.textContent = '';
+    target.appendChild(image);
   } catch (error) {
     if (token === frameToken) { showReject(slot, 0, String(error)); }
   } finally {
@@ -523,11 +640,23 @@ function init() {
     tabs.appendChild(button);
 
     const slot = document.createElement('div');
+    const canvas = document.createElement('div');
     slot.className = 'slot';
     slot.id = 'slot-' + kind.id;
-    slot.title = 'открыть в разборе: ' + kind.alt;
     slot.onclick = function () { selectKind(kind.id); setLayout('detail'); };
+    canvas.className = 'canvas';
+    slot.appendChild(canvas);
+    attachHelp(slot);
     grid.appendChild(slot);
+  });
+
+  // Подсказка ставится у кадра текущей конфигурации; у опорного кадра «Сравнения» она была бы
+  // повтором того же текста
+  attachHelp(el('slotOne'));
+  attachHelp(el('slotCur'));
+  document.addEventListener('click', closeTips);
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') { closeTips(); }
   });
 
   el('fs').max = sampleRateSteps.length - 1;

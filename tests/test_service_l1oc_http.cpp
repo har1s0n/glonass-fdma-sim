@@ -389,6 +389,41 @@ TEST_F(ServiceHttp, Test27_PanelPageTakesConstantsFromModel) {
                         + std::to_string(glonass_params::defaultSampleRate)));
 }
 
+// Каждый кадр сопровождается подсказкой: наблюдаемый блок тракта, что изображено и зачем кадр
+// на панели (критерий покрытия, контракт § 5.4)
+TEST_F(ServiceHttp, Test28_PanelPageExplainsEveryFrame) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_TRUE(contains(response->body, "Блоки В, Г_L1OC, Д_L1OC"));
+   EXPECT_TRUE(contains(response->body, "Блоки А_L1OC, В, Г_L1OC"));
+   EXPECT_TRUE(contains(response->body, "Блок А_L1OC"));
+   EXPECT_TRUE(contains(response->body, "Блок Б_L1OC"));
+   EXPECT_TRUE(contains(response->body, "Блок Д_L1OC"));
+
+   // По одной опознавательной части текста на каждый из шести кадров
+   EXPECT_TRUE(contains(response->body, "полосу модели B_model"));
+   EXPECT_TRUE(contains(response->body, "16 чипов уплотнения"));
+   EXPECT_TRUE(contains(response->body, "максимум бокового лепестка"));
+   EXPECT_TRUE(contains(response->body, "по всем парам состава"));
+   EXPECT_TRUE(contains(response->body, "свёрточного кода (133,171)"));
+   EXPECT_TRUE(contains(response->body, "±η·ΣA_j"));
+
+   // Третья строка подсказки: что показывает кадр и с чем сверяться
+   EXPECT_TRUE(contains(response->body, "Зачем: "));
+   EXPECT_TRUE(contains(response->body, "Смотреть: "));
+   EXPECT_TRUE(contains(response->body, "20 дБ на декаду"));
+   EXPECT_TRUE(contains(response->body, "компоненты не суммируются"));
+   EXPECT_TRUE(contains(response->body, "первого НКА состава"));
+   EXPECT_TRUE(contains(response->body, "границе Велча"));
+   EXPECT_TRUE(contains(response->body, "сменяется номер строки"));
+   EXPECT_TRUE(contains(response->body, "пик-фактор 0 дБ"));
+
+   // Знак тире в тексте страницы не применяется (требование по оформлению)
+   EXPECT_FALSE(contains(response->body, "—"));
+}
+
 TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
    ASSERT_EQ(service_->config().maxStreams, 1);
    std::atomic<bool> streaming{ false };
