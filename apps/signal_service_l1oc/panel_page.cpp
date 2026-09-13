@@ -3,6 +3,7 @@
 #include <string>
 
 #include "glonass/types.h"
+#include "panel_receiver.h"
 #include "request_params_l1oc.h"
 
 namespace glonass_service {
@@ -46,9 +47,15 @@ body.layout-compare main{grid-template-columns:minmax(0,1fr);
 #grid{grid-area:grid}
 #single{grid-area:single}
 #compare{grid-area:compare}
+body.layout-receiver main{grid-template-columns:300px minmax(0,1fr);
+  grid-template-areas:"controls receiver"}
+#receiver{grid-area:receiver}
 body.layout-overview #tabs,body.layout-overview #single,body.layout-overview #compare{display:none}
 body.layout-detail #grid,body.layout-detail #compare{display:none}
 body.layout-compare #grid,body.layout-compare #single,body.layout-compare #metrics{display:none}
+body.layout-receiver #metrics,body.layout-receiver #tabs,body.layout-receiver #grid,
+body.layout-receiver #single,body.layout-receiver #compare{display:none}
+body:not(.layout-receiver) #receiver,body:not(.layout-receiver) #session{display:none}
 
 #controls{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px}
 .fields{display:grid;gap:13px}
@@ -118,9 +125,40 @@ body.layout-detail .fields,body.layout-compare .fields{
 .col.diffs .tiles{grid-template-columns:minmax(0,1fr)}
 .col.diffs .tile{border-color:var(--mark)}
 
+#session{display:grid;gap:9px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+#session h2{margin:0}
+.field input[type=text]{width:100%;font:inherit;font-size:13px;padding:5px 8px;
+  border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+.rxrow{display:flex;flex-wrap:wrap;gap:6px}
+.act:disabled{opacity:.45;cursor:default;border-color:var(--line)}
+.rxwarn{font-size:12px;line-height:1.45;color:var(--warn);white-space:pre-line}
+.rxwarn:empty{display:none}
+#receiver{display:grid;gap:12px;align-content:start}
+#rxTiles{grid-template-columns:repeat(auto-fit,minmax(135px,1fr))}
+#rxSlot{min-height:220px;padding:10px}
+.rxwrap{width:100%;overflow-x:auto}
+.rxtable{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.rxtable th{font-weight:600;color:var(--muted);text-align:right;padding:4px 7px;
+  border-bottom:1px solid var(--line);white-space:nowrap}
+.rxtable td{text-align:right;padding:3px 7px;border-bottom:1px solid var(--soft);white-space:nowrap}
+.rxtable .l{text-align:left}
+.rxtable th:last-child{padding-right:34px}
+.rxsvg{width:100%;height:auto;display:block}
+.rxnote{margin:0;font-size:12px;color:var(--muted)}
+.cls-genuine{color:var(--accent);font-weight:600}
+.cls-spurious{color:var(--warn);font-weight:600}
+.cls-outside{color:var(--mark)}
+.cls-missing,.cls-unknown{color:var(--muted)}
+.fill-genuine{fill:var(--accent)}
+.fill-spurious{fill:var(--warn)}
+.fill-outside{fill:var(--mark)}
+.fill-missing,.fill-unknown{fill:var(--muted)}
+
 @media (max-width:1100px){
   body.layout-overview main{grid-template-columns:minmax(0,1fr);
     grid-template-areas:"controls" "metrics" "grid"}
+  body.layout-receiver main{grid-template-columns:minmax(0,1fr);
+    grid-template-areas:"controls" "receiver"}
   #compare{grid-template-columns:minmax(0,1fr)}
 }
 </style>
@@ -133,6 +171,7 @@ body.layout-detail .fields,body.layout-compare .fields{
 <button type="button" data-layout="overview" class="on">Обзор</button>
 <button type="button" data-layout="detail">Разбор</button>
 <button type="button" data-layout="compare">Сравнение</button>
+<button type="button" data-layout="receiver">Приёмник</button>
 </nav>
 </header>
 
@@ -171,6 +210,19 @@ body.layout-detail .fields,body.layout-compare .fields{
 </div>
 <button type="button" class="act" id="reset">Опорные значения</button>
 </div>
+<div id="session">
+<h2>Сеанс и приёмник</h2>
+<div class="field">
+<label for="rxAddr">Адрес приёмника<span class="val" id="rxLink">связь не установлена</span></label>
+<input type="text" id="rxAddr" spellcheck="false" autocomplete="off">
+</div>
+<div class="rxrow">
+<button type="button" class="act" id="rxOpen">Открыть сеанс</button>
+<button type="button" class="act" id="rxClose">Закрыть сеанс</button>
+</div>
+<div class="params" id="rxSession">сеанс не открыт</div>
+<div class="rxwarn" id="rxWarn"></div>
+</div>
 </aside>
 
 <div class="tiles" id="metrics"></div>
@@ -198,6 +250,14 @@ body.layout-detail .fields,body.layout-compare .fields{
 <div class="tiles" id="curMetrics"></div>
 </section>
 </div>
+
+<section id="receiver">
+<div class="tiles" id="rxTiles"></div>
+<div class="segmented" id="rxViews"></div>
+<div class="slot" id="rxSlot"><div class="canvas">
+<div class="hint">связь с приёмником не установлена</div></div></div>
+<p class="rxnote">Шума в тракте нет: абсолютные значения C/N0 условны, значимы сдвиги между сеансами.</p>
+</section>
 </main>
 
 <script>
@@ -522,6 +582,7 @@ async function loadFrame(slot, kind, query, token) {
 function refreshFrames() {
   const query = queryOf(currentParams());
   const token = ++frameToken;
+  if (layout === 'receiver') { return; } // кадры модели в компоновке «Приёмник» не строятся
   if (layout === 'overview') {
     kinds.forEach(function (kind) { loadFrame(el('slot-' + kind.id), kind, query, token); });
     return;
@@ -598,6 +659,7 @@ function setLayout(name) {
   for (let i = 0; i < buttons.length; ++i) {
     buttons[i].classList.toggle('on', buttons[i].dataset.layout === name);
   }
+  receiverLayoutChanged(name === 'receiver');
   refreshFrames();
 }
 
@@ -624,6 +686,7 @@ function resetControls() {
   updateLabels();
   refreshState();
   refreshFrames();
+  receiverParamsChanged();
 }
 
 function init() {
@@ -666,6 +729,7 @@ function init() {
     const control = el(id);
     control.addEventListener('input', function () { updateLabels(); scheduleState(); });
     control.addEventListener('change', function () { updateLabels(); refreshFrames(); });
+    control.addEventListener('input', receiverParamsChanged);
   });
 
   const layoutButtons = el('layouts').children;
@@ -674,6 +738,7 @@ function init() {
   }
   el('pin').onclick = applyReference;
   el('reset').onclick = resetControls;
+  receiverInit();
 
   updateLabels();
   renderDiff();
@@ -681,7 +746,11 @@ function init() {
   refreshState();
   refreshFrames();
 }
+)PANEL";
 
+// Завершение страницы. Вызов init() стоит после сценария компоновки «Приёмник»: объявления
+// const этого сценария должны быть вычислены до первого обращения к ним
+constexpr const char* pageEnd = R"PANEL(
 init();
 </script>
 </body>
@@ -699,7 +768,14 @@ std::string composePage() {
            + ", 5000000, 10000000, " + std::to_string(glonass_params::defaultSampleRate)
            + ", 40000000];\n";
    page += "const defaultSampleRate = " + std::to_string(glonass_params::defaultSampleRate) + ";\n";
+
+   // Компоновка «Приёмник»: N_d и f_T1 задают период ДК L1OCd на выходе уплотнения
+   // T_d = 2·N_d/f_T1 и допуск по кодовому смещению в один чип уплотнения 1/f_T1
+   page += "const codeLengthD = " + std::to_string(glonass::codeLengthD) + ";\n";
+   page += "const chipRateL1OC = " + std::to_string(glonass::chipRateL1OC) + ";\n";
    page += pageTail;
+   page += panelReceiverScript();
+   page += pageEnd;
    return page;
 }
 } // namespace

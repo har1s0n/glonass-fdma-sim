@@ -23,6 +23,17 @@ bool contains(const std::string& text, const std::string& fragment) {
    return text.find(fragment) != std::string::npos;
 }
 
+// Число непересекающихся вхождений фрагмента в текст
+std::size_t occurrences(const std::string& text, const std::string& fragment) {
+   std::size_t count = 0;
+
+   for (std::size_t at = text.find(fragment); at != std::string::npos;
+        at = text.find(fragment, at + fragment.size())) {
+      ++count;
+   }
+   return count;
+}
+
 class ServiceHttp : public ::testing::Test {
 protected:
 
@@ -358,15 +369,19 @@ TEST_F(ServiceHttp, Test25_PanelPageCarriesThreeLayouts) {
    EXPECT_TRUE(contains(response->body, "Сравнение"));
 }
 
-// Внешних ресурсов страница не загружает и обращается только к точкам того же источника:
-// сеть комплекса замкнута, порт наружу не публикуется (решение 10 контракта)
+// Внешних ресурсов страница не загружает; к точкам модели обращается только в пределах того же
+// источника: сеть комплекса замкнута, порт наружу не публикуется (решение 10 контракта).
+// Единственное обращение к другому источнику: подписка компоновки «Приёмник» на WebSocket
+// приёмника по адресу, заданному на странице (решение от 11.09.2026)
 TEST_F(ServiceHttp, Test26_PanelPageHasNoExternalResources) {
    httplib::Client client(localHost, port_);
    const auto response = client.Get("/panel");
 
    ASSERT_TRUE(response);
-   EXPECT_FALSE(contains(response->body, "://"));
+   EXPECT_EQ(occurrences(response->body, "://"), occurrences(response->body, "ws://"));
+   EXPECT_EQ(occurrences(response->body, "new WebSocket("), 1u);
    EXPECT_FALSE(contains(response->body, "<link"));
+   EXPECT_FALSE(contains(response->body, "<script src"));
    EXPECT_TRUE(contains(response->body, "/v1/info"));
    EXPECT_TRUE(contains(response->body, "/v1/state?"));
    EXPECT_TRUE(contains(response->body, "/v1/frames/"));
@@ -422,6 +437,42 @@ TEST_F(ServiceHttp, Test28_PanelPageExplainsEveryFrame) {
 
    // Знак тире в тексте страницы не применяется (требование по оформлению)
    EXPECT_FALSE(contains(response->body, "—"));
+}
+
+// Четвёртая компоновка «Приёмник»: живые данные внешнего приёмника по WebSocket, три вида и
+// управление потоковым сеансом из панели (решения от 11.09.2026)
+TEST_F(ServiceHttp, Test29_PanelPageCarriesReceiverLayout) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_TRUE(contains(response->body, "data-layout=\"receiver\""));
+   EXPECT_TRUE(contains(response->body, ">Приёмник<"));
+   EXPECT_TRUE(contains(response->body, "Таблица каналов"));
+   EXPECT_TRUE(contains(response->body, "C/N0 по НКА"));
+   EXPECT_TRUE(contains(response->body, "Сопоставление с моделью"));
+
+   // Темы протокола pocket_web и точка потокового сеанса того же источника
+   EXPECT_TRUE(contains(response->body, "'ch_stat'"));
+   EXPECT_TRUE(contains(response->body, "'rcv_stat'"));
+   EXPECT_TRUE(contains(response->body, "'/v1/stream/tcp"));
+
+   // Приёмник перезапускается под каждый сеанс: его отсчётное время начинается с n₀
+   EXPECT_TRUE(contains(response->body, "cmd: 'stop'"));
+   EXPECT_TRUE(contains(response->body, "cmd: 'start'"));
+}
+
+// Период ДК L1OCd на выходе уплотнения и допуск по кодовому смещению выводятся из констант
+// модели: T_d = 2·N_d/f_T1, допуск равен одному чипу уплотнения 1/f_T1
+TEST_F(ServiceHttp, Test30_PanelPageTakesReceiverConstantsFromModel) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_TRUE(contains(response->body,
+                        "const codeLengthD = " + std::to_string(glonass::codeLengthD)));
+   EXPECT_TRUE(contains(response->body,
+                        "const chipRateL1OC = " + std::to_string(glonass::chipRateL1OC)));
 }
 
 TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
