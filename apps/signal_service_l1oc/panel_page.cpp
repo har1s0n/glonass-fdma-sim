@@ -4,12 +4,13 @@
 
 #include "glonass/types.h"
 #include "panel_receiver.h"
+#include "panel_receiver_views.h"
 #include "request_params_l1oc.h"
 
 namespace glonass_service {
 namespace {
-// Часть страницы до блока числовых констант сценария
-constexpr const char* pageHead = R"PANEL(<!DOCTYPE html>
+constexpr const char* pageHead =
+   R"PANEL(<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -17,22 +18,59 @@ constexpr const char* pageHead = R"PANEL(<!DOCTYPE html>
 <title>Панель модели сигнала L1OC</title>
 <style>
 :root{
-  --bg:#eef1f4; --card:#ffffff; --fg:#10151c; --muted:#55606e;
-  --line:#dfe4ea; --soft:#f0f3f6; --accent:#123f8f; --warn:#c2410c; --mark:#6b21a8;
+  color-scheme:dark;
+  --bg:#080d11;                       /* .twinSceneLeftPanel: фон rgba(8,13,17,.84) без прозрачности */
+  --card:#1a1a1a;                     /* .twinTelemetrySectionContent, .twinSectionSummaryContainer */
+  --soft:#222222;                     /* .twinMetricTile, .twinTelemetrySectionHeader */
+  --fg:#f4f8f4;                       /* .twinMetricTile strong */
+  --muted:#aaaaaa;                    /* .twinMetricTile span, .twinMetricLabel */
+  --line:#333333;                     /* .twinTelemetrySection, .twinTelemetryHeader */
+  --edge:rgba(255,255,255,.06);       /* .twinMetricTile, .twinAfuLegendPanel */
+  --accent:#4caf50;                   /* .twinTelemetryTitle, .twinTelemetrySettingsCheckbox */
+  --accent-hi:#8bdc65;                /* .twinMetricTile.accent strong */
+  --accent-tile:linear-gradient(135deg,rgba(76,175,80,.22),rgba(34,34,34,.95)); /* .twinMetricTile.accent */
+  --accent-edge:rgba(76,175,80,.32);  /* .twinMetricTile.accent */
+  --pill:rgba(76,175,80,.12);         /* .twinSectionDetailsButton */
+  --pill-edge:rgba(76,175,80,.35);    /* .twinSectionDetailsButton */
+  --pill-fg:#cfead1;                  /* .twinSectionDetailsButton */
+  --pill-on:rgba(76,175,80,.22);      /* .twinSectionDetailsButton:hover */
+  --pill-on-edge:rgba(76,175,80,.72); /* .twinSectionDetailsButton:hover */
+  --warn:#f6c86f;                     /* .twinNoticeTriggerWarning */
+  --warn-edge:rgba(246,200,111,.38);  /* .twinNoticeTriggerWarning */
+  --mark:#7edcff;                     /* .twinNoticeTriggerInfo */
+  --note:#c7c7c7;                     /* .twinAfuLegendPanel span */
+  --note-bg:rgba(34,34,34,.8);        /* .twinAfuLegendPanel */
+  --popup:rgba(30,30,30,.98);         /* .twinTelemetrySettingsDialog */
+  --popup-edge:#444444;               /* .twinTelemetrySettingsDialog */
+  --popup-shadow:0 4px 12px rgba(0,0,0,.5); /* .twinTelemetrySettingsDialog */
+  --popup-fg:#dce3e1;                 /* .twinNoticeItem p */
+  --chip:rgba(255,255,255,.08);       /* .twinNoticeModule */
+  --chip-fg:#b9c7ca;                  /* .twinNoticeModule */
+  --disabled:#778185;                 /* .twinNoticeTrigger:disabled */
+  --focus:#d7e8ee;                    /* .twinSectionDetailsButton:focus-visible */
+  --r-card:6px;                       /* .twinTelemetrySection */
+  --r-tile:7px;                       /* .twinMetricTile */
+  --r-popup:8px;                      /* .twinTelemetrySettingsDialog, .twinAfuLegendPanel */
+  /* Производное: кадр /v1/frames остаётся белым; на панели его белый фон переходит в --card
+     (1 − 0,9 = 0,1, то есть #1a1a1a), поворот на 180° возвращает оттенки линий после инверсии */
+  --frame-filter:invert(.9) hue-rotate(180deg);
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
-     font:14px/1.5 "Helvetica Neue",Helvetica,Arial,sans-serif}
-header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 20px}
-h1{font-size:19px;font-weight:600;margin:0 0 3px}
+     font:14px/1.5 Arial,sans-serif} /* .twinSceneLeftPanel */
+button:focus-visible,input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+header{border-bottom:1px solid var(--line);padding:14px 20px} /* .twinTelemetryHeader */
+h1{font-size:16px;font-weight:700;line-height:24px;color:var(--accent);margin:0 0 3px} /* .twinTelemetryTitle */
 .origin{margin:0 0 10px;color:var(--muted);font-size:12px}
-h2{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
-   color:var(--muted);margin:0 0 10px}
+h2{font-size:14px;font-weight:700;line-height:21px;color:var(--accent);margin:0 0 10px} /* .twinTelemetrySectionTitle */
 .segmented{display:flex;flex-wrap:wrap;gap:6px}
-.segmented button{font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);
-  background:var(--card);color:var(--fg);border-radius:6px;cursor:pointer}
-.segmented button:hover{border-color:var(--accent)}
-.segmented button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/* Переключателей в образце нет: кнопки-пилюли .twinSectionDetailsButton, выбранная в состоянии
+   раскрытого блока, при наведении меняются рамка и текст (производное) */
+.segmented button{font:inherit;font-size:11px;font-weight:800;line-height:1;min-height:28px;
+  padding:6px 9px;border:1px solid var(--pill-edge);border-radius:999px;
+  background:var(--pill);color:var(--pill-fg);cursor:pointer}
+.segmented button:hover{border-color:var(--pill-on-edge);color:#fff}
+.segmented button.on{background:var(--pill-on);border-color:var(--pill-on-edge);color:#fff}
 
 main{display:grid;gap:14px;padding:14px 20px;align-content:start}
 body.layout-overview main{grid-template-columns:300px minmax(0,1fr);
@@ -57,57 +95,74 @@ body.layout-receiver #metrics,body.layout-receiver #tabs,body.layout-receiver #g
 body.layout-receiver #single,body.layout-receiver #compare{display:none}
 body:not(.layout-receiver) #receiver,body:not(.layout-receiver) #session{display:none}
 
-#controls{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px}
-.fields{display:grid;gap:13px}
+/* Левая колонка оформлена блоком .twinTelemetrySection: строка заголовка
+   .twinTelemetrySectionHeader, содержимое .twinTelemetrySectionContent */
+#controls{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);
+  overflow:hidden}
+#controls h2{margin:0;padding:10px 15px;background:var(--soft)}
+.fields{display:grid;gap:13px;padding:15px}
 body.layout-detail .fields,body.layout-compare .fields{
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start}
 .field label{display:flex;justify-content:space-between;gap:8px;font-size:12px;
-  color:var(--muted);margin-bottom:4px}
-.field .val{color:var(--fg);font-weight:600;white-space:nowrap}
+  color:var(--muted);margin-bottom:4px} /* .twinMetricLabel */
+.field .val{color:var(--fg);font-weight:700;white-space:nowrap}
+/* Ползунков в образце нет: цвет по флажкам .twinTelemetrySettingsCheckbox, дорожка тёмная
+   по color-scheme (производное) */
 .field input[type=range]{width:100%;accent-color:var(--accent);margin:0}
 .check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);
   margin-top:6px;cursor:pointer}
 .check input{accent-color:var(--accent);margin:0}
-.act{font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);
-  background:var(--soft);color:var(--fg);border-radius:6px;cursor:pointer}
-.act:hover{border-color:var(--accent)}
+.act{font:inherit;font-size:11px;font-weight:800;line-height:1;min-height:28px;padding:6px 9px;
+  border:1px solid var(--pill-edge);border-radius:999px;
+  background:var(--pill);color:var(--pill-fg);cursor:pointer} /* .twinSectionDetailsButton */
+.act:hover{background:var(--pill-on);border-color:var(--pill-on-edge);color:#fff}
+.fields .act{justify-self:start} /* пилюля по ширине надписи, как у .twinSectionDetailsButton */
 
 .tiles{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));
   align-content:start}
-.tile{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
-.tile .k{font-size:11px;color:var(--muted)}
-.tile .v{font-size:16px;font-weight:600;line-height:1.3}
+/* Плитка .twinMetricTile, текст по центру (в образце наследуется от #root); подпись
+   переносится по строкам и занимает не менее двух строк, как у .twinAfuMetricsGrid */
+.tile{background:var(--soft);border:1px solid var(--edge);border-radius:var(--r-tile);padding:8px;
+  text-align:center}
+.tile .k{font-size:11px;line-height:1.25;color:var(--muted);margin-bottom:4px;min-height:28px}
+.tile .v{font-size:13px;font-weight:700;line-height:1.2}
+.tile.warn{border-color:var(--warn-edge)}
 .tile.warn .v{color:var(--warn)}
-.tile.wide{grid-column:1/-1}
+.tile.wide{grid-column:1/-1;border-color:var(--warn-edge)}
 .tile.wide .v{font-size:13px;font-weight:400;color:var(--warn)}
 
 #grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(450px,1fr))}
-.slot{position:relative;background:var(--card);border:1px solid var(--line);border-radius:6px;
-  padding:6px;min-height:140px;display:flex;align-items:center;justify-content:center}
-.slot img{width:100%;height:auto;display:block;border-radius:4px}
+/* Карточка кадра оформлена блоком .twinTelemetrySection */
+.slot{position:relative;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r-card);padding:6px;min-height:140px;display:flex;align-items:center;
+  justify-content:center}
+.slot img{width:100%;height:auto;display:block;border-radius:4px;filter:var(--frame-filter)}
 .canvas{width:100%;display:flex;align-items:center;justify-content:center}
 
+/* Значок подсказки по кнопке .twinTelemetrySettingsButton, раскрытый по пилюле */
 .help{position:absolute;top:9px;right:9px;width:20px;height:20px;padding:0;z-index:4;
-  border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--muted);
-  font:600 12px/1 "Helvetica Neue",Helvetica,Arial,sans-serif;cursor:help}
-.help:hover,.slot.tipOn .help{background:var(--accent);border-color:var(--accent);color:#fff}
+  border:1px solid var(--line);border-radius:50%;background:var(--soft);color:var(--muted);
+  font:700 12px/1 Arial,sans-serif;cursor:help}
+.help:hover,.slot.tipOn .help{background:var(--pill-on);border-color:var(--pill-on-edge);color:#fff}
+/* Карточка подсказки по диалогу .twinTelemetrySettingsDialog */
 .tip{position:absolute;top:35px;right:9px;width:440px;max-width:calc(100% - 18px);z-index:5;
   text-align:left;cursor:default;
-  background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;
-  box-shadow:0 6px 18px rgba(16,21,28,.14);
+  background:var(--popup);border:1px solid var(--popup-edge);border-radius:var(--r-popup);
+  padding:10px 12px;box-shadow:var(--popup-shadow);
   opacity:0;visibility:hidden;transform:translateY(-4px);
   transition:opacity .12s ease,transform .12s ease}
 .help:hover + .tip,.help:focus-visible + .tip,.tip:hover,.slot.tipOn .tip{
   opacity:1;visibility:visible;transform:none}
 .tip::before{content:"";position:absolute;top:-5px;right:13px;width:8px;height:8px;
-  background:var(--card);border-left:1px solid var(--line);border-top:1px solid var(--line);
-  transform:rotate(45deg)}
-.tipHead{display:inline-block;margin-bottom:7px;padding:2px 7px;border-radius:4px;
-  background:var(--soft);color:var(--accent);font-size:11px;font-weight:600;letter-spacing:.03em}
-.tipText{margin:0 0 6px;font-size:12.5px;line-height:1.45;color:var(--fg)}
+  background:var(--popup);border-left:1px solid var(--popup-edge);
+  border-top:1px solid var(--popup-edge);transform:rotate(45deg)}
+/* Метка блока тракта по метке модуля .twinNoticeModule, без прописных: обозначения Ч3 */
+.tipHead{display:inline-block;margin-bottom:7px;padding:2px 6px;border-radius:4px;
+  background:var(--chip);color:var(--chip-fg);font-size:11px;font-weight:700;letter-spacing:.04em}
+.tipText{margin:0 0 6px;font-size:12.5px;line-height:1.45;color:var(--popup-fg)}
 .tipText:last-child{margin-bottom:0}
 .tipWhy{color:var(--muted)}
-.tipWhy b{color:var(--fg);font-weight:600}
+.tipWhy b{color:var(--fg);font-weight:700}
 .slot.busy{opacity:.5}
 #grid .slot{cursor:pointer}
 #single{display:grid;justify-items:center}
@@ -118,35 +173,49 @@ body.layout-detail .fields,body.layout-compare .fields{
 #compare{display:grid;gap:12px;grid-template-columns:minmax(0,1fr) 230px minmax(0,1fr)}
 #compare .col{display:grid;gap:8px;align-content:start}
 .colhead{display:flex;align-items:center;justify-content:space-between;gap:8px;
-  font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
-.params{font-size:12px;color:var(--muted);background:var(--card);border:1px solid var(--line);
-  border-radius:6px;padding:7px 10px}
+  font-size:14px;font-weight:700;color:var(--accent)} /* .twinTelemetrySectionTitle */
+.params{font-size:12px;color:var(--note);background:var(--note-bg);border:1px solid var(--edge);
+  border-radius:var(--r-popup);padding:10px} /* .twinAfuLegendPanel */
 #compare .tiles{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
 .col.diffs .tiles{grid-template-columns:minmax(0,1fr)}
-.col.diffs .tile{border-color:var(--mark)}
+/* Разность выводится выделенной плиткой .twinMetricTile.accent */
+.col.diffs .tile{background:var(--accent-tile);border-color:var(--accent-edge)}
+.col.diffs .tile .v{color:var(--accent-hi)}
 
-#session{display:grid;gap:9px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+/* Сеанс продолжает левую колонку вторым блоком со своей строкой заголовка */
+#session{display:grid;gap:9px;padding:0 0 15px;border-top:1px solid var(--line)}
 #session h2{margin:0}
+#session>:not(h2){margin:0 15px}
+/* Полей ввода в панели «Телеметрия» нет: фон и радиус плитки, рамка блока (производное) */
 .field input[type=text]{width:100%;font:inherit;font-size:13px;padding:5px 8px;
-  border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+  border:1px solid var(--line);border-radius:var(--r-tile);background:var(--soft);color:var(--fg)}
 .rxrow{display:flex;flex-wrap:wrap;gap:6px}
-.act:disabled{opacity:.45;cursor:default;border-color:var(--line)}
+.act:disabled{opacity:.72;cursor:default;color:var(--disabled);border-color:var(--line);
+  background:var(--soft)} /* .twinNoticeTrigger:disabled */
 .rxwarn{font-size:12px;line-height:1.45;color:var(--warn);white-space:pre-line}
 .rxwarn:empty{display:none}
 #receiver{display:grid;gap:12px;align-content:start}
 #rxTiles{grid-template-columns:repeat(auto-fit,minmax(135px,1fr))}
 #rxSlot{min-height:220px;padding:10px}
 .rxwrap{width:100%;overflow-x:auto}
+/* Таблиц в образце нет: заголовок по .twinMetricLabel, линии по рамкам блока и плитки (производное) */
 .rxtable{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
-.rxtable th{font-weight:600;color:var(--muted);text-align:right;padding:4px 7px;
+.rxtable th{font-weight:700;color:var(--muted);text-align:right;padding:4px 7px;
   border-bottom:1px solid var(--line);white-space:nowrap}
-.rxtable td{text-align:right;padding:3px 7px;border-bottom:1px solid var(--soft);white-space:nowrap}
+.rxtable td{text-align:right;padding:3px 7px;border-bottom:1px solid var(--edge);white-space:nowrap}
 .rxtable .l{text-align:left}
 .rxtable th:last-child{padding-right:34px}
 .rxsvg{width:100%;height:auto;display:block}
 .rxnote{margin:0;font-size:12px;color:var(--muted)}
-.cls-genuine{color:var(--accent);font-weight:600}
-.cls-spurious{color:var(--warn);font-weight:600}
+/* Строка выбора над видом (НКА для корреляторов): поле как у полей ввода панели (производное) */
+.rxbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.rxbar:empty{display:none}
+.rxbar select{font:inherit;font-size:12px;padding:4px 8px;border:1px solid var(--line);
+  border-radius:var(--r-tile);background:var(--soft);color:var(--fg)}
+.rxstack{width:100%;display:grid;gap:10px}
+.rxmono{font-family:monospace;font-size:11px}
+.cls-genuine{color:var(--accent-hi);font-weight:700}
+.cls-spurious{color:var(--warn);font-weight:700}
 .cls-outside{color:var(--mark)}
 .cls-missing,.cls-unknown{color:var(--muted)}
 .fill-genuine{fill:var(--accent)}
@@ -254,6 +323,7 @@ body.layout-detail .fields,body.layout-compare .fields{
 <section id="receiver">
 <div class="tiles" id="rxTiles"></div>
 <div class="segmented" id="rxViews"></div>
+<div class="rxbar" id="rxBar"></div>
 <div class="slot" id="rxSlot"><div class="canvas">
 <div class="hint">связь с приёмником не установлена</div></div></div>
 <p class="rxnote">Шума в тракте нет: абсолютные значения C/N0 условны, значимы сдвиги между сеансами.</p>
@@ -265,11 +335,8 @@ body.layout-detail .fields,body.layout-compare .fields{
 )PANEL";
 
 // Часть страницы после блока числовых констант сценария
-constexpr const char* pageTail = R"PANEL(
-// Подсказка кадра: наблюдаемый блок тракта, что изображено и зачем кадр на панели.
-// Набор из шести кадров определён по критерию покрытия (контракт § 5.4): удаление любого
-// кадра оставляет хотя бы один блок тракта А–Д ненаблюдаемым.
-// Тире в тексте страницы не применяется по требованию к оформлению.
+constexpr const char* pageTail =
+   R"PANEL(
 const kinds = [
   { id: 'psd', tab: 'СПМ', alt: 'Спектральная плотность мощности',
     block: 'Блоки В, Г_L1OC, Д_L1OC',
@@ -316,7 +383,6 @@ let stateTimer = 0;
 
 function el(id) { return document.getElementById(id); }
 
-// Русский числовой формат кадров: запятая, узкий неразрывный пробел в разрядах, знак U+2212
 function numberRu(value, digits) {
   const sign = (value < 0) ? '−' : '';
   const text = Math.abs(value).toFixed((digits === undefined) ? 0 : digits);
@@ -382,7 +448,6 @@ function currentParams() {
   return parameters;
 }
 
-// Имена параметров совпадают с ключами модуля запуска (контракт, раздел 4)
 function queryOf(parameters) {
   let query = 'fs=' + parameters.sampleRate + '&f0=' + parameters.referenceFreq
             + '&n0=' + parameters.startSample + '&j=' + parameters.satellites;
@@ -576,9 +641,6 @@ async function loadFrame(slot, kind, query, token) {
   }
 }
 
-// Кадры перестраиваются по отпусканию органа управления: комплект шести кадров при полном
-// составе стоит около 146 мс, и при перерисовке на каждое движение обращения копятся быстрее,
-// чем разбираются (ввод-вывод блокирующий, контракт п. 10.4).
 function refreshFrames() {
   const query = queryOf(currentParams());
   const token = ++frameToken;
@@ -757,9 +819,6 @@ init();
 </html>
 )PANEL";
 
-// Числовые параметры сигнала в тексте страницы не дублируются: опорная частота и нижняя
-// граница ряда Fs (= 2·B_model — граница условия представимости В.2 при Δf = 0) подставляются
-// из glonass/types.h, значение по умолчанию — из ключей модуля запуска.
 std::string composePage() {
    std::string page = pageHead;
 
@@ -775,6 +834,7 @@ std::string composePage() {
    page += "const chipRateL1OC = " + std::to_string(glonass::chipRateL1OC) + ";\n";
    page += pageTail;
    page += panelReceiverScript();
+   page += panelReceiverViewsScript();
    page += pageEnd;
    return page;
 }

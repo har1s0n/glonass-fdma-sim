@@ -2,10 +2,6 @@
 
 namespace glonass_service {
 namespace {
-// Сценарий компоновки «Приёмник». Вставляется в страницу после сценария панели модели и до
-// вызова init(): функции панели (el, numberRu, signedRu, tile, attachHelp, fillTip, canvasOf,
-// currentParams, queryOf, summaryOf) и константы codeLengthD, chipRateL1OC уже объявлены.
-// Тире в тексте страницы не применяется по требованию к оформлению.
 constexpr const char* receiverScript =
    R"PANEL(
 // ─── Компоновка «Приёмник» ───
@@ -23,8 +19,8 @@ const chipDurationMs = 1000 / chipRateL1OC;
 const coffToleranceChips = 1;
 const dopToleranceHz = 100;
 // Порт pocket_web по умолчанию: закрепляется за приёмником в описании состава стенда
-// (решение от 11.09.2026; порт 8081 занят сервисом модели АФУ)
-const receiverPortDefault = 8082;
+// (решение от 14.09.2026: 8080 сервис сигнала L1OC, 8081 pocket_web, 8082 сервис модели АФУ)
+const receiverPortDefault = 8081;
 // Версия протокола pocket_web, под которую написан разбор
 const receiverProtocol = 1;
 // Обозначение сигнала L1OCd в PocketSDR (ключ -sig G1OCD) и код формата CS16 (SDR_FMT_CS16)
@@ -92,17 +88,33 @@ function receiverSend(command) {
   if (receiverOpen()) { receiverSocket.send(JSON.stringify(command)); }
 }
 
-// Таблица каналов раз в 200 мс, состояние приёмника раз в секунду, настройки однократно
+// Таблица каналов раз в 200 мс, состояние приёмника раз в секунду, настройки однократно; эти темы
+// нужны плиткам и держатся при любом виде. Темы остальных видов запрашиваются только на время
+// показа вида, как в интерфейсе PocketSDR
 function receiverSubscribe() {
   receiverSend({ cmd: 'sub', topic: 'ch_stat', cyc: 200, sys: 'ALL', chno: 0,
                  min_lock: channelMinLockSeconds, rfch: 0, opt: 0 });
   receiverSend({ cmd: 'sub', topic: 'rcv_stat', cyc: 1000 });
   receiverSend({ cmd: 'get', topic: 'cfg' });
+  receiverViewSubscribe();
 }
 
 function receiverUnsubscribe() {
   receiverSend({ cmd: 'unsub', topic: 'ch_stat' });
   receiverSend({ cmd: 'unsub', topic: 'rcv_stat' });
+  receiverViewUnsubscribe();
+}
+
+// Перерисовка не чаще раза в 100 мс: темы корреляторов и спектра приходят по нескольку раз в секунду
+let receiverRenderPending = false;
+
+function requestReceiverRender() {
+  if (receiverRenderPending) { return; }
+  receiverRenderPending = true;
+  setTimeout(function () {
+    receiverRenderPending = false;
+    renderReceiver();
+  }, 100);
 }
 
 function receiverLinkText(text) {
@@ -120,6 +132,7 @@ function receiverConnect() {
     return;
   }
   receiverSocket = socket;
+  socket.binaryType = 'arraybuffer'; // двоичные кадры спектра и корреляторов (протокол v1, Binary frames)
   receiverLinkText('подключение');
   socket.onopen = function () {
     receiverRetry = 1000;
@@ -128,7 +141,10 @@ function receiverConnect() {
     renderReceiver();
   };
   socket.onmessage = function (event) {
-    if (typeof event.data !== 'string') { return; } // двоичные темы (спектр, корреляторы) не запрашиваются
+    if (typeof event.data !== 'string') {
+      if (receiverBinaryMessage(event.data)) { requestReceiverRender(); }
+      return;
+    }
     let message = null;
     try { message = JSON.parse(event.data); } catch (error) { return; }
     receiverMessage(message);
@@ -139,6 +155,7 @@ function receiverConnect() {
     receiverConfig = null;
     receiverChannels = null;
     receiverStatus = null;
+    receiverViewsReset();
     receiverLinkText('связь не установлена');
     renderReceiver();
     if (receiverActive && !receiverSocket) {
@@ -157,15 +174,16 @@ function receiverMessage(message) {
     receiverConfig = message;
   } else if (message.type === 'ch_stat') {
     receiverChannels = parseChannelTable(String(message.str || ''));
+    receiverViewChannelsChanged();
   } else if (message.type === 'rcv_stat') {
     receiverStatus = parseReceiverStatus(String(message.str || ''));
   } else if ((message.type === 'ack') && ((message.cmd === 'start') || (message.cmd === 'stop'))) {
     if (message.ok) { return; }
     receiverNotice = 'приёмник: команда ' + message.cmd + ' не выполнена' + (message.msg ? (': ' + message.msg) : '');
-  } else {
+  } else if (!receiverExtraMessage(message)) {
     return;
   }
-  renderReceiver();
+  requestReceiverRender();
 }
 
 // Таблица каналов (формат print_ch_stat, src/sdr_rcv.c): строка состояния, строка заголовка,
@@ -179,8 +197,9 @@ function parseChannelTable(text) {
     const field = lines[i].trim().split(/\s+/);
     if (field.length === 15) { field.splice(7, 0, ''); }
     if (field.length < 16) { continue; }
-    rows.push({ sig: field[3], prn: +field[4], lock: +field[5], cn0: +field[6], coff: +field[8],
-                dop: +field[9], sync: field[11], nav: +field[12], err: +field[13], lol: +field[14] });
+    rows.push({ ch: +field[0], sig: field[3], prn: +field[4], lock: +field[5], cn0: +field[6],
+                coff: +field[8], dop: +field[9], sync: field[11], nav: +field[12], err: +field[13],
+                lol: +field[14] });
   }
   return { buffer: head ? +head[1] : NaN, locked: head ? +head[3] : NaN,
            total: head ? +head[4] : NaN, rows: rows };
@@ -214,9 +233,6 @@ function wrapCodePeriod(valueMs) {
   return (rest < 0) ? (rest + codePeriodMs) : rest;
 }
 
-// Ожидаемое кодовое смещение, мс: прогон начинается с отсчёта n₀, поэтому до ближайшего начала
-// периода ДК L1OCd остаётся (−n₀/Fs) mod T_d (подтверждено сценарием С5). Числитель n₀·1000
-// целый, поэтому при n₀, кратном T_d·Fs, результат точно нулевой.
 function expectedCoffMs(parameters) {
   return wrapCodePeriod(-parameters.startSample * 1000 / parameters.sampleRate);
 }
@@ -295,6 +311,7 @@ async function openSession() {
       const stored = { id: reply.sessionId, port: reply.port, query: query, params: parameters };
       receiverSession = sessionOf(stored);
       storageSet('rxSession', JSON.stringify(stored));
+      receiverViewsReset(); // строки НС и кадры прошлого сеанса к новому не относятся
       receiverNotice = restart ? ''
         : 'приёмник не перезапущен: управление им недоступно; опора COFF верна, только если он запущен под этот сеанс';
     }
@@ -477,9 +494,6 @@ function renderChannelTable(target, rows) {
   target.appendChild(wrap);
 }
 
-// Изображения видов собираются строкой разметки SVG внутри документа HTML: вставленный фрагмент
-// наследует стиль страницы, пространство имён указывать не требуется. В разметку попадают только
-// числа и собственные подписи страницы.
 function escapeText(text) {
   return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -497,7 +511,7 @@ function svgLegend(x, y, counts) {
     const label = classNames[cls] + ': ' + counts[cls];
     out += '<rect x="' + position.toFixed(1) + '" y="' + (y - 9).toFixed(1)
          + '" width="10" height="10" rx="2" class="fill-' + cls + '"/>';
-    out += svgText(position + 14, y, label, 'font-size="12" fill="#10151c"');
+    out += svgText(position + 14, y, label, 'font-size="12" style="fill:var(--fg)"');
     position += 26 + label.length * 6.6;
   });
   return out;
@@ -505,8 +519,8 @@ function svgLegend(x, y, counts) {
 
 function svgFrame(width, height, title, subtitle, content) {
   return '<svg class="rxsvg" viewBox="0 0 ' + width + ' ' + height + '" role="img">'
-       + svgText(16, 24, title, 'font-size="15" font-weight="600" fill="#10151c"')
-       + svgText(16, 43, subtitle, 'font-size="12" fill="#55606e"')
+       + svgText(16, 24, title, 'font-size="15" font-weight="600" style="fill:var(--fg)"')
+       + svgText(16, 43, subtitle, 'font-size="12" style="fill:var(--muted)"')
        + content + '</svg>';
 }
 
@@ -536,31 +550,31 @@ function renderCn0Chart(target, rows) {
   let content = '';
   for (let level = 0; level <= yMax; level += 10) {
     content += '<line x1="' + left + '" x2="' + (left + plotWidth) + '" y1="' + yOf(level).toFixed(1)
-             + '" y2="' + yOf(level).toFixed(1) + '" stroke="#dfe4ea"/>';
-    content += svgText(left - 8, yOf(level) + 4, numberRu(level), 'font-size="11" fill="#55606e" text-anchor="end"');
+             + '" y2="' + yOf(level).toFixed(1) + '" style="stroke:var(--line)"/>';
+    content += svgText(left - 8, yOf(level) + 4, numberRu(level), 'font-size="11" style="fill:var(--muted)" text-anchor="end"');
   }
   rows.forEach(function (item) {
     const center = left + (item.row.prn - 0.5) * step;
     if (item.cls === 'missing') {
-      content += svgText(center, yOf(0) - 6, 'нет', 'font-size="10" fill="#55606e" text-anchor="middle"');
+      content += svgText(center, yOf(0) - 6, 'нет', 'font-size="10" style="fill:var(--muted)" text-anchor="middle"');
       return;
     }
     const barTop = yOf(Math.max(0, Math.min(item.row.cn0, yMax)));
     content += '<rect x="' + (center - step * 0.3).toFixed(1) + '" y="' + barTop.toFixed(1) + '" width="'
              + (step * 0.6).toFixed(1) + '" height="' + (yOf(0) - barTop).toFixed(1) + '" class="fill-'
              + item.cls + '"/>';
-    content += svgText(center, barTop - 4, numberRu(item.row.cn0, 1), 'font-size="9.5" fill="#10151c" text-anchor="middle"');
+    content += svgText(center, barTop - 4, numberRu(item.row.cn0, 1), 'font-size="9.5" style="fill:var(--fg)" text-anchor="middle"');
   });
   for (let prn = 1; prn <= lastPrn; ++prn) {
     const member = members.indexOf(prn) >= 0;
     content += svgText(left + (prn - 0.5) * step, yOf(0) + 16, String(prn), 'font-size="11" text-anchor="middle" '
-                       + (member ? 'font-weight="700" fill="#10151c"' : 'fill="#55606e"'));
+                       + (member ? 'font-weight="700" style="fill:var(--fg)"' : 'style="fill:var(--muted)"'));
   }
   content += '<line x1="' + left + '" x2="' + (left + plotWidth) + '" y1="' + yOf(0).toFixed(1) + '" y2="'
-           + yOf(0).toFixed(1) + '" stroke="#55606e"/>';
+           + yOf(0).toFixed(1) + '" style="stroke:var(--muted)"/>';
   content += svgText(left + plotWidth / 2, height - 12, 'номер НКА (жирным выделены НКА состава J сеанса)',
-                     'font-size="12" fill="#55606e" text-anchor="middle"');
-  content += svgText(14, top + plotHeight / 2, 'C/N0, дБ·Гц', 'font-size="12" fill="#55606e" text-anchor="middle" '
+                     'font-size="12" style="fill:var(--muted)" text-anchor="middle"');
+  content += svgText(14, top + plotHeight / 2, 'C/N0, дБ·Гц', 'font-size="12" style="fill:var(--muted)" text-anchor="middle" '
                      + 'transform="rotate(-90 14 ' + (top + plotHeight / 2).toFixed(1) + ')"');
   content += svgLegend(width - 430, 24, countByClass(rows));
   target.innerHTML = svgFrame(width, height, 'C/N0 по номерам НКА', sessionSubtitle(), content);
@@ -592,18 +606,18 @@ function renderMatchChart(target, rows) {
   let clipped = 0;
   [-xLimit, -xLimit / 2, 0, xLimit / 2, xLimit].forEach(function (value) {
     content += '<line x1="' + xOf(value).toFixed(1) + '" x2="' + xOf(value).toFixed(1) + '" y1="' + top + '" y2="'
-             + (top + plotHeight) + '" stroke="' + (value === 0 ? '#55606e' : '#dfe4ea') + '"/>';
-    content += svgText(xOf(value), top + plotHeight + 16, signedRu(value), 'font-size="11" fill="#55606e" text-anchor="middle"');
+             + (top + plotHeight) + '" style="stroke:' + (value === 0 ? 'var(--muted)' : 'var(--line)') + '"/>';
+    content += svgText(xOf(value), top + plotHeight + 16, signedRu(value), 'font-size="11" style="fill:var(--muted)" text-anchor="middle"');
   });
   [-yLimit, -yLimit / 2, 0, yLimit / 2, yLimit].forEach(function (value) {
     content += '<line x1="' + left + '" x2="' + (left + plotWidth) + '" y1="' + yOf(value).toFixed(1) + '" y2="'
-             + yOf(value).toFixed(1) + '" stroke="' + (value === 0 ? '#55606e' : '#dfe4ea') + '"/>';
-    content += svgText(left - 8, yOf(value) + 4, signedRu(value), 'font-size="11" fill="#55606e" text-anchor="end"');
+             + yOf(value).toFixed(1) + '" style="stroke:' + (value === 0 ? 'var(--muted)' : 'var(--line)') + '"/>';
+    content += svgText(left - 8, yOf(value) + 4, signedRu(value), 'font-size="11" style="fill:var(--muted)" text-anchor="end"');
   });
   content += '<rect x="' + xOf(-coffToleranceChips).toFixed(1) + '" y="' + yOf(dopToleranceHz).toFixed(1)
            + '" width="' + (xOf(coffToleranceChips) - xOf(-coffToleranceChips)).toFixed(1) + '" height="'
            + (yOf(-dopToleranceHz) - yOf(dopToleranceHz)).toFixed(1)
-           + '" fill="#123f8f" fill-opacity="0.08" stroke="#123f8f" stroke-dasharray="4 3"/>';
+           + '" fill-opacity="0.08" stroke-dasharray="4 3" style="fill:var(--accent);stroke:var(--accent)"/>';
   tracked.forEach(function (item) {
     const dx = coffChipsOf(item.row);
     const dy = item.row.dop - receiverSession.expectedDop;
@@ -621,14 +635,14 @@ function renderMatchChart(target, rows) {
     const label = labels[key];
     const alongRight = label.x > left + plotWidth * 0.8;
     content += svgText(alongRight ? (label.x - 8) : (label.x + 8), label.y - 7, label.list.join(', '),
-                       'font-size="10.5" fill="#10151c"' + (alongRight ? ' text-anchor="end"' : ''));
+                       'font-size="10.5" style="fill:var(--fg)"' + (alongRight ? ' text-anchor="end"' : ''));
   });
-  content += svgText(left + plotWidth / 2, height - 12, 'ΔCOFF, чипов уплотнения', 'font-size="12" fill="#55606e" text-anchor="middle"');
-  content += svgText(16, top + plotHeight / 2, 'ΔDOP, Гц', 'font-size="12" fill="#55606e" text-anchor="middle" '
+  content += svgText(left + plotWidth / 2, height - 12, 'ΔCOFF, чипов уплотнения', 'font-size="12" style="fill:var(--muted)" text-anchor="middle"');
+  content += svgText(16, top + plotHeight / 2, 'ΔDOP, Гц', 'font-size="12" style="fill:var(--muted)" text-anchor="middle" '
                      + 'transform="rotate(-90 16 ' + (top + plotHeight / 2).toFixed(1) + ')"');
   content += svgLegend(width - 430, 24, countByClass(tracked));
   if (clipped) {
-    content += svgText(width - right, top - 6, 'за пределами шкалы: ' + clipped, 'font-size="11" fill="#55606e" text-anchor="end"');
+    content += svgText(width - right, top - 6, 'за пределами шкалы: ' + clipped, 'font-size="11" style="fill:var(--muted)" text-anchor="end"');
   }
   const subtitle = 'COFF_ож = ' + numberRu(receiverSession.expectedCoff, 5) + ' мс · DOP_ож = Δf = '
                  + signedRu(receiverSession.expectedDop) + ' Гц · ' + summaryOf(receiverSession.params);
@@ -637,6 +651,11 @@ function renderMatchChart(target, rows) {
 
 function renderReceiverView(rows) {
   const target = canvasOf(el('rxSlot'));
+  const view = receiverViewOf(receiverView);
+  if (view.render) { // виды на темах corr, log, psd, sat_stat, pvt_sol сами проверяют наличие данных
+    view.render(target, rows);
+    return;
+  }
   if (!receiverChannels) {
     showHint(target, receiverSocket ? 'данные приёмника ожидаются' : 'связь с приёмником не установлена');
     return;
@@ -667,11 +686,14 @@ function receiverViewOf(id) {
 
 function selectReceiverView(id) {
   const buttons = el('rxViews').children;
+  if (receiverActive) { receiverViewUnsubscribe(); }
   receiverView = id;
   for (let i = 0; i < buttons.length; ++i) {
     buttons[i].classList.toggle('on', buttons[i].dataset.view === id);
   }
+  if (receiverActive) { receiverViewSubscribe(); }
   fillTip(el('rxSlot'), receiverViewOf(id));
+  renderReceiverBar();
   renderReceiver();
 }
 
@@ -680,6 +702,7 @@ function receiverLayoutChanged(active) {
   receiverActive = active;
   if (active) {
     fillTip(el('rxSlot'), receiverViewOf(receiverView));
+    renderReceiverBar();
     if (receiverOpen()) { receiverSubscribe(); } else { receiverConnect(); }
   } else {
     clearTimeout(receiverTimer);

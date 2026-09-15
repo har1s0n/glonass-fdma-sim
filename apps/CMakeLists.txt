@@ -38,6 +38,8 @@ if(GLONASS_BUILD_SERVICE)
         signal_service_l1oc/panel_page.cpp
         signal_service_l1oc/panel_receiver.h
         signal_service_l1oc/panel_receiver.cpp
+        signal_service_l1oc/panel_receiver_views.h
+        signal_service_l1oc/panel_receiver_views.cpp
         signal_service_l1oc/state_metrics.h
         signal_service_l1oc/state_metrics.cpp
         signal_service_l1oc/stream_session.h

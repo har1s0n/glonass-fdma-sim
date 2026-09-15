@@ -369,16 +369,12 @@ TEST_F(ServiceHttp, Test25_PanelPageCarriesThreeLayouts) {
    EXPECT_TRUE(contains(response->body, "Сравнение"));
 }
 
-// Внешних ресурсов страница не загружает; к точкам модели обращается только в пределах того же
-// источника: сеть комплекса замкнута, порт наружу не публикуется (решение 10 контракта).
-// Единственное обращение к другому источнику: подписка компоновки «Приёмник» на WebSocket
-// приёмника по адресу, заданному на странице (решение от 11.09.2026)
 TEST_F(ServiceHttp, Test26_PanelPageHasNoExternalResources) {
    httplib::Client client(localHost, port_);
    const auto response = client.Get("/panel");
 
    ASSERT_TRUE(response);
-   EXPECT_EQ(occurrences(response->body, "://"), occurrences(response->body, "ws://"));
+   EXPECT_EQ(occurrences(response->body, "://"),            occurrences(response->body, "ws://"));
    EXPECT_EQ(occurrences(response->body, "new WebSocket("), 1u);
    EXPECT_FALSE(contains(response->body, "<link"));
    EXPECT_FALSE(contains(response->body, "<script src"));
@@ -405,7 +401,7 @@ TEST_F(ServiceHttp, Test27_PanelPageTakesConstantsFromModel) {
 }
 
 // Каждый кадр сопровождается подсказкой: наблюдаемый блок тракта, что изображено и зачем кадр
-// на панели (критерий покрытия, контракт § 5.4)
+// на панели
 TEST_F(ServiceHttp, Test28_PanelPageExplainsEveryFrame) {
    httplib::Client client(localHost, port_);
    const auto response = client.Get("/panel");
@@ -435,12 +431,10 @@ TEST_F(ServiceHttp, Test28_PanelPageExplainsEveryFrame) {
    EXPECT_TRUE(contains(response->body, "сменяется номер строки"));
    EXPECT_TRUE(contains(response->body, "пик-фактор 0 дБ"));
 
-   // Знак тире в тексте страницы не применяется (требование по оформлению)
    EXPECT_FALSE(contains(response->body, "—"));
 }
 
-// Четвёртая компоновка «Приёмник»: живые данные внешнего приёмника по WebSocket, три вида и
-// управление потоковым сеансом из панели (решения от 11.09.2026)
+// Четвёртая компоновка «Приёмник»: живые данные внешнего приёмника по WebSocket
 TEST_F(ServiceHttp, Test29_PanelPageCarriesReceiverLayout) {
    httplib::Client client(localHost, port_);
    const auto response = client.Get("/panel");
@@ -473,6 +467,27 @@ TEST_F(ServiceHttp, Test30_PanelPageTakesReceiverConstantsFromModel) {
                         "const codeLengthD = " + std::to_string(glonass::codeLengthD)));
    EXPECT_TRUE(contains(response->body,
                         "const chipRateL1OC = " + std::to_string(glonass::chipRateL1OC)));
+}
+
+TEST_F(ServiceHttp, Test31_PanelPageCarriesReceiverViews) {
+   httplib::Client client(localHost, port_);
+   const auto response = client.Get("/panel");
+
+   ASSERT_TRUE(response);
+   EXPECT_TRUE(contains(response->body, "'Корреляторы'"));
+   EXPECT_TRUE(contains(response->body, "'Строки НС'"));
+   EXPECT_TRUE(contains(response->body, "'Спектр входа'"));
+   EXPECT_TRUE(contains(response->body, "'Небо'"));
+   EXPECT_TRUE(contains(response->body, "'Решение'"));
+
+   EXPECT_TRUE(contains(response->body, "topic: 'corr'"));
+   EXPECT_TRUE(contains(response->body, "topic: 'corr_hist'"));
+   EXPECT_TRUE(contains(response->body, "topic: 'log'"));
+   EXPECT_TRUE(contains(response->body, "topic: 'psd'"));
+   EXPECT_TRUE(contains(response->body, "topic: 'sat_stat'"));
+   EXPECT_TRUE(contains(response->body, "topic: 'pvt_sol'"));
+   EXPECT_TRUE(contains(response->body, "binaryType = 'arraybuffer'"));
+   EXPECT_TRUE(contains(response->body, "'/v1/frames/navline?"));
 }
 
 TEST_F(ServiceHttp, Test18_StreamLimitGivesUnavailable) {
