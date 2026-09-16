@@ -451,9 +451,8 @@ TEST_F(ServiceHttp, Test29_PanelPageCarriesReceiverLayout) {
    EXPECT_TRUE(contains(response->body, "'rcv_stat'"));
    EXPECT_TRUE(contains(response->body, "'/v1/stream/tcp"));
 
-   // Приёмник перезапускается под каждый сеанс: его отсчётное время начинается с n₀
-   EXPECT_TRUE(contains(response->body, "cmd: 'stop'"));
-   EXPECT_TRUE(contains(response->body, "cmd: 'start'"));
+   EXPECT_FALSE(contains(response->body, "cmd: 'stop'"));
+   EXPECT_FALSE(contains(response->body, "cmd: 'start'"));
 }
 
 // Период ДК L1OCd на выходе уплотнения и допуск по кодовому смещению выводятся из констант

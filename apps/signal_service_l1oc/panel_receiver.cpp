@@ -177,9 +177,6 @@ function receiverMessage(message) {
     receiverViewChannelsChanged();
   } else if (message.type === 'rcv_stat') {
     receiverStatus = parseReceiverStatus(String(message.str || ''));
-  } else if ((message.type === 'ack') && ((message.cmd === 'start') || (message.cmd === 'stop'))) {
-    if (message.ok) { return; }
-    receiverNotice = 'приёмник: команда ' + message.cmd + ' не выполнена' + (message.msg ? (': ' + message.msg) : '');
   } else if (!receiverExtraMessage(message)) {
     return;
   }
@@ -277,19 +274,9 @@ function errorMessageOf(text) {
   try { return JSON.parse(text).message; } catch (error) { return text; }
 }
 
-// Приёмник допускает команды пуска и останова, если приложение передало ему настройки
-function receiverControllable() {
-  return receiverOpen() && !!receiverHello && !!receiverHello.cfg_ena;
-}
-
-// Параметры сеанса фиксируются при открытии и служат опорой оценки каналов.
-// Приёмник останавливается до открытия сеанса и запускается после: его отсчётное время начинается
-// с первого отсчёта сеанса n₀. Переподключённый без перезапуска приёмник продолжает время прошлого
-// сеанса, и опора COFF смещается на произвольную величину
 async function openSession() {
   if (receiverSession) { return; }
   const parameters = currentParams();
-  const restart = receiverControllable();
   if (receiverConfig) {
     const rate = Math.round(receiverConfig.fs * 1e6);
     if (rate !== parameters.sampleRate) {
@@ -300,7 +287,6 @@ async function openSession() {
     }
   }
   const query = queryOf(parameters);
-  if (restart) { receiverSend({ cmd: 'stop' }); }
   try {
     const response = await fetch('/v1/stream/tcp?' + query + '&format=cs16', { method: 'POST' });
     const text = await response.text();
@@ -312,18 +298,16 @@ async function openSession() {
       receiverSession = sessionOf(stored);
       storageSet('rxSession', JSON.stringify(stored));
       receiverViewsReset(); // строки НС и кадры прошлого сеанса к новому не относятся
-      receiverNotice = restart ? ''
-        : 'приёмник не перезапущен: управление им недоступно; опора COFF верна, только если он запущен под этот сеанс';
+      receiverNotice = '';
     }
   } catch (error) {
     receiverNotice = 'обращение не выполнено: ' + String(error);
   }
-  if (restart) { receiverSend({ cmd: 'start' }); }
   renderReceiver();
 }
 
-// Сеанс закрывается раньше останова приёмника: иначе приёмник, разорвав соединение, завершил бы
-// сеанс сам. Остановленный приёмник не подхватит чужой сеанс на том же порту.
+// Закрытие сеанса обрывает выдачу: приёмник, потеряв входной поток, перезапускается сам и ждёт
+// следующего сеанса
 async function closeSession() {
   if (!receiverSession) { return; }
   try {
@@ -333,7 +317,6 @@ async function closeSession() {
       receiverNotice = (response.status === 404) ? 'сеанс уже был завершён сервисом' : '';
       receiverSession = null;
       storageSet('rxSession', null);
-      if (receiverControllable()) { receiverSend({ cmd: 'stop' }); }
     } else {
       receiverNotice = 'сеанс не закрыт, код ' + response.status;
     }
@@ -350,7 +333,7 @@ function receiverWarnings() {
               + receiverProtocol);
   }
   if (receiverHello && !receiverHello.run) {
-    list.push('приёмник остановлен: пуск выполняется в его собственном интерфейсе');
+    list.push('приёмник остановлен: он запускается вместе с pocket_web, перезапустите контейнер приёмника');
   }
   if (receiverConfig) {
     const rate = Math.round(receiverConfig.fs * 1e6);
