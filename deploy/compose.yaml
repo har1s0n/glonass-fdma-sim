@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
 
   pocket-web:
-    image: pocket-web:03787da5-u2
+    image: pocket-web:03787da5-u3
     build:
       context: ..
       dockerfile: deploy/pocket-web/Dockerfile

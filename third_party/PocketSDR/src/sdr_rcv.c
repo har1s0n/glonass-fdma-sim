@@ -1321,7 +1321,23 @@ static void *rcv_thread(void *arg)
             continue;
         }
         sum_size += size;
-        
+
+        // У3: для CS16 масштаб перевода в int8 определяется по всем отсчётам первого блока до его
+        // записи. Начальная таблица с масштабом 1 срезала бы отсчёты до ±7 на всю первую секунду
+        // (до первого update_scale), и поиск в эту секунду давал ложные захваты; статистика
+        // update_data_stats (100 отсчётов) не годится: в начале потока модели они бывают нулевыми
+        if (ix == 0 && rcv->fmt == SDR_FMT_CS16) {
+            for (int k = 0; k < rcv->N; k++) {
+                int16_t I0 = *(int16_t *)(raw + k * 4);
+                int16_t Q0 = *(int16_t *)(raw + k * 4 + 2);
+                rcv->stats.sum_iq[0] += I0;
+                rcv->stats.sum_iq[1] += Q0;
+                rcv->stats.sumsq_iq[0] += SQR(I0);
+                rcv->stats.sumsq_iq[1] += SQR(Q0);
+            }
+            rcv->stats.cnt += rcv->N;
+            update_scale(rcv);
+        }
         // write IF data buffer
         write_buff(rcv, raw, ix);
         

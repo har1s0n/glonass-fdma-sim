@@ -57,6 +57,13 @@
 #define DEF_CFG_FS     12e6     // default sampling rate (sps)
 #define WS_GUID        "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+// У2: режим «только наблюдение». Управление жизненным циклом приёмника клиентам не
+// предоставляется: признак выдаётся нулём, внутренний cfg_ena остаётся 1 для ключа -start и
+// перезапуска по окончании входного потока
+#define CFG_ENA_REPORT 0
+#define INP_TO_INACT   10000    // У2: предел бездействия входного потока, мс (умолчание RTKLIB)
+#define INP_TO_RECON   1000     // У2: интервал переподключения входного потока, мс
+
 #define FRM_PSD        1        // binary frame type: PSD
 #define FRM_CORR       2        // binary frame type: correlator snapshot
 #define FRM_CORR_HIST  3        // binary frame type: correlator history
@@ -132,6 +139,7 @@ struct sdr_web_tag {            // Web UI server type
     sdr_web_cfg_t cfg;          // receiver configuration
     int cfg_ena;                // receiver lifecycle control enabled
     int run;                    // last reported receiver run state
+    int inp_conn;               // У2: входной поток был соединён после пуска приёмника
     char cfg_file[1024];        // settings file ("": no save and restore)
     double opts_def[N_OPT];     // system option values at server start
     sock_t ssock;               // listen socket
@@ -523,7 +531,7 @@ static void send_hello(sdr_web_t *web, web_cli_t *cli)
         "\"fs\":%.0f,\"sel_ch\":%d,\"run\":%d,\"cfg_ena\":%d}", sdr_get_name(),
         sdr_get_ver(), WEB_PROTO, rcv ? rcv->nrfch : 0, rcv ? rcv->narch : 0,
         rcv ? rcv->nch : 0, rcv ? rcv->fs : 0.0,
-        web->sel_ch, rcv && rcv->state ? 1 : 0, web->cfg_ena);
+        web->sel_ch, rcv && rcv->state ? 1 : 0, CFG_ENA_REPORT);
     ws_send_text(cli, buff);
 }
 
@@ -866,7 +874,7 @@ static void send_opts(sdr_web_t *web, web_cli_t *cli)
     n += snprintf(buff + n, sizeof(buff) - n, ",\"fftw\":\"%s\"", esc);
     jsn_esc(esc, sizeof(esc), web->cfg.opt);
     snprintf(buff + n, sizeof(buff) - n, ",\"opt\":\"%s\",\"fast_acq\":%d,"
-        "\"ena\":%d,\"run\":%d}", esc, web->cfg.fast_acq, web->cfg_ena,
+        "\"ena\":%d,\"run\":%d}", esc, web->cfg.fast_acq, CFG_ENA_REPORT,
         web->rcv && web->rcv->state ? 1 : 0);
     ws_send_text(cli, buff);
 }
@@ -880,7 +888,7 @@ static void send_cfg(sdr_web_t *web, web_cli_t *cli)
 
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "{\"type\":\"cfg\","
         "\"ena\":%d,\"run\":%d,\"inp\":%d,\"fmt\":%d,\"fs\":%.6f,",
-        web->cfg_ena, web->rcv && web->rcv->state ? 1 : 0, c->inp, c->fmt,
+        CFG_ENA_REPORT, web->rcv && web->rcv->state ? 1 : 0, c->inp, c->fmt,
         c->fs * 1e-6);
     jsn_esc(esc, sizeof(esc), c->file);
     n += snprintf(buff + n, JSON_BUFF_SIZE - n, "\"file\":\"%s\",", esc);
@@ -1176,6 +1184,12 @@ static int start_rcv(sdr_web_t *web)
     sdr_mutex_lock(&web->rcv_mtx);
     if (web->rcv) sdr_rcv_close(web->rcv);
     web->rcv = cfg_open(&web->cfg);
+    // У2: после отказа или разрыва входной поток переподключается через INP_TO_RECON вместо
+    // 10 с по умолчанию RTKLIB: приёмник подключается к сеансу вскоре после его открытия
+    if (web->rcv && web->rcv->dev == SDR_DEV_STR) {
+        strsettimeout((stream_t *)web->rcv->dp, INP_TO_INACT, INP_TO_RECON);
+    }
+    web->inp_conn = 0;
     sdr_mutex_unlock(&web->rcv_mtx);
     web->sel_ch = 0;
     return web->rcv != NULL;
@@ -1359,6 +1373,13 @@ static void proc_cmd(sdr_web_t *web, web_cli_t *cli, const char *msg)
 
     if (!jsn_str(msg, "cmd", cmd, sizeof(cmd))) {
         ws_send_text(cli, "{\"type\":\"error\",\"msg\":\"no cmd\"}");
+        return;
+    }
+    // У2: режим «только наблюдение»: допускаются чтение тем и выбор канала коррелятора, прочие
+    // команды отклоняются тем же ответом, что у сервера без настроек приёмника
+    if (strcmp(cmd, "sub") && strcmp(cmd, "unsub") && strcmp(cmd, "get") &&
+        strcmp(cmd, "sel_ch")) {
+        send_ack(cli, cmd, 0, "\"msg\":\"not supported\"");
         return;
     }
     if (!strcmp(cmd, "sub") || !strcmp(cmd, "get")) {
@@ -1734,6 +1755,25 @@ static void accept_cli(sdr_web_t *web)
     closesocket(sock); // no free client slot
 }
 
+// У2: перезапуск приёмника по окончании входного потока -----------------------
+//   Клиент TCP RTKLIB после разрыва переподключается сам, и без перезапуска приёмник
+//   продолжал бы отсчётное время прошлого подключения. Переход потока из состояния
+//   «соединён» в «не соединён» закрывает приёмник и открывает его по той же конфигурации:
+//   отсчётное время начинается с первого отсчёта следующего подключения.
+static void check_inp_end(sdr_web_t *web)
+{
+    sdr_rcv_t *rcv = run_rcv(web);
+
+    if (!rcv || rcv->dev != SDR_DEV_STR) return;
+    if (strstat((stream_t *)rcv->dp, NULL) >= 2) { // 2: соединён, 3: активен
+        web->inp_conn = 1;
+        return;
+    }
+    if (!web->inp_conn) return;
+    start_rcv(web); // сбрасывает inp_conn
+    bcast_hello(web);
+}
+
 // Web UI server thread --------------------------------------------------------
 static void *web_thread(void *arg)
 {
@@ -1777,6 +1817,7 @@ static void *web_thread(void *arg)
             if (!run) save_cfg(web);
             bcast_hello(web);
         }
+        check_inp_end(web); // У2
         for (int i = 0; i < MAX_WEB_CLI; i++) {
             web_cli_t *cli = web->cli + i;
             if (cli->state != 2 || cli->close_req) continue;
