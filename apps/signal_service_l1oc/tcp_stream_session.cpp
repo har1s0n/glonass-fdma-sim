@@ -163,7 +163,7 @@ private:
    int connection_ = -1;
    int wakeup_[2]  = { -1, -1 };
    StreamRequest request_;
-   std::unique_ptr<StreamSlot> slot_; // место в пределе; возвращается разрушением сеанса
+   std::unique_ptr<StreamSlot> slot_; // место в пределе; возвращается по окончании выдачи
    int acceptTimeoutSeconds_ = 0;
    std::uint64_t requestId_  = 0;
    std::mutex socketMutex_;           // доступ к connection_ из потока запроса и потока сеанса
@@ -184,6 +184,7 @@ void TcpSession::run() {
    }
 
    if (connection < 0) {
+      slot_.reset(); // место в пределе возвращается сразу: выдачи не будет
       logLine("INFO", requestId_,
               "сеанс " + sessionId_ + ": подключения не было, порт " + std::to_string(port_)
               + (stopRequested_.load() ? "; сеанс закрыт" : "; ожидание истекло"));
@@ -218,6 +219,10 @@ void TcpSession::run() {
    } catch (...) {
       logLine("ERROR", requestId_, "сеанс " + sessionId_ + ": неопознанное исключение");
    }
+
+   // Место в пределе возвращается по окончании выдачи и до закрытия соединения: получатель,
+   // увидевший конец потока, может сразу открыть следующий, не дожидаясь пожинания сеанса
+   slot_.reset();
    {
       const std::lock_guard<std::mutex> lock(socketMutex_);
 

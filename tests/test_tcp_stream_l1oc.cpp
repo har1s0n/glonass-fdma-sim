@@ -493,3 +493,57 @@ TEST_F(TcpStream, Test11_StopClosesActiveSession) {
    EXPECT_TRUE(drainUntilClosed(receiver, 64U * 1024U * 1024U));
    ::close(receiver);
 }
+
+// Место в пределе возвращается по окончании выдачи, а не при пожинании сеанса очередным
+// обращением к точкам сеансов: поток HTTP, открытый сразу после конца сеанса, не получает 503
+TEST_F(TcpStream, Test12_FinishedSessionReleasesSlotForHttpStream) {
+   start(testConfig());
+   ASSERT_EQ(service_->config().maxStreams, 1);
+   httplib::Client client(localHost, port_);
+   const auto opened = client.Post("/v1/stream/tcp?j=1&n=512&format=cf32&blockSamples=128");
+
+   ASSERT_TRUE(opened);
+   ASSERT_EQ(opened->status, 201);
+   const int receiver = connectTo(static_cast<int> (intFieldOf(opened->body, "port")));
+
+   ASSERT_GE(receiver, 0);
+   EXPECT_EQ(receive(receiver, 512U * 8U + 64U).size(), 512U * 8U); // выдача исчерпана, поток закрыт
+   ::close(receiver);
+
+   // Точки сеансов не вызываются: пожинания нет, освобождение места зависит только от сеанса
+   const auto stream = client.Get("/v1/stream?j=1&n=256&format=cf32");
+
+   ASSERT_TRUE(stream);
+   EXPECT_EQ(stream->status,      200);
+   EXPECT_EQ(stream->body.size(), 256U * 8U);
+}
+
+// Сеанс закрыт до подключения получателя: место в пределе возвращается потоком сеанса сразу,
+// поток HTTP открывается без пожинания сеанса очередным обращением к точкам сеансов
+TEST_F(TcpStream, Test13_SessionClosedBeforeConnectReleasesSlot) {
+   start(testConfig());
+   httplib::Client client(localHost, port_);
+   const auto opened = client.Post("/v1/stream/tcp?j=1&n=512");
+
+   ASSERT_TRUE(opened);
+   ASSERT_EQ(opened->status, 201);
+   const auto closed = client.Delete("/v1/stream/tcp/" + stringFieldOf(opened->body, "sessionId"));
+
+   ASSERT_TRUE(closed);
+   ASSERT_EQ(closed->status, 200);
+
+   // Поток сеанса завершается асинхронно: ожидание ограничено 2 с
+   int status = 0;
+
+   for (int attempt = 0; (attempt < 200) && (status != 200); ++attempt) {
+      const auto stream = client.Get("/v1/stream?j=1&n=256&format=cf32");
+
+      ASSERT_TRUE(stream);
+      status = stream->status;
+
+      if (status != 200) {
+         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+   }
+   EXPECT_EQ(status, 200);
+}
