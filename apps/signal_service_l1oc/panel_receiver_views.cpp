@@ -17,6 +17,7 @@ const psdAverageSeconds = 0.01;
 // Строк НС в таблице вида
 const navRowsKept = 60;
 const corrStateNames = { 1: 'простой', 2: 'поиск', 3: 'сопровождение' };
+const corrStateLock = 3; // SDR_STATE_LOCK (src/pocket_sdr.h)
 
 let corrChosenPrn = 0;         // НКА, выбранный на панели; 0: по умолчанию
 let corrSubscribedChannel = 0; // канал приёмника, на который оформлена подписка corr
@@ -159,39 +160,44 @@ function renderReceiverBar() {
   view.bar(bar);
 }
 
-// Выбор НКА для корреляторов; список пересобирается только при смене сопровождаемых каналов
+// Выбор НКА для корреляторов. Элемент списка создаётся один раз: пересоздание при каждой смене
+// сопровождаемых каналов уничтожало открытый список, и выбор терялся. Пункты обновляются на месте;
+// пока список в фокусе, они не трогаются, и отложенное обновление применяется при потере фокуса
 function renderCorrBar(bar) {
-  const rows = receiverChannels ? channelRows().filter(function (item) { return item.cls !== 'missing'; }) : [];
-  const key = rows.map(function (item) { return item.row.prn + ':' + item.cls; }).join(' ') + '|' + corrChosenPrn;
   let select = bar.querySelector('select');
-  if (select && (select.dataset.key === key)) { return; }
-  const label = document.createElement('label');
-  const automatic = document.createElement('option');
-  bar.textContent = '';
-  label.textContent = 'НКА для корреляторов';
-  label.htmlFor = 'rxCorrPrn';
-  select = document.createElement('select');
-  select.id = 'rxCorrPrn';
+  if (!select) {
+    const label = document.createElement('label');
+    bar.textContent = '';
+    label.textContent = 'НКА для корреляторов';
+    label.htmlFor = 'rxCorrPrn';
+    select = document.createElement('select');
+    select.id = 'rxCorrPrn';
+    select.onchange = function () {
+      corrChosenPrn = +select.value;
+      corrSubscribe();
+      renderReceiverBar();
+      requestReceiverRender();
+    };
+    select.onblur = renderReceiverBar;
+    bar.appendChild(label);
+    bar.appendChild(select);
+  }
+  if (document.activeElement === select) { return; }
+  const rows = receiverChannels ? channelRows().filter(function (item) { return item.cls !== 'missing'; }) : [];
+  const items = [{ value: '0', text: 'по умолчанию: первый истинный' }].concat(rows.map(function (item) {
+    return { value: String(item.row.prn), text: 'НКА ' + item.row.prn + ' · ' + classNames[item.cls] };
+  }));
+  const key = items.map(function (item) { return item.value + ':' + item.text; }).join('|') + '|' + corrChosenPrn;
+  if (select.dataset.key === key) { return; }
   select.dataset.key = key;
-  automatic.value = '0';
-  automatic.textContent = 'по умолчанию: первый истинный';
-  select.appendChild(automatic);
-  rows.forEach(function (item) {
-    const option = document.createElement('option');
-    option.value = String(item.row.prn);
-    option.textContent = 'НКА ' + item.row.prn + ' · ' + classNames[item.cls];
-    select.appendChild(option);
+  items.forEach(function (item, index) {
+    const option = select.options[index] || select.appendChild(document.createElement('option'));
+    option.value = item.value;
+    option.textContent = item.text;
   });
+  while (select.options.length > items.length) { select.remove(select.options.length - 1); }
   select.value = String(corrChosenPrn);
   if (select.value !== String(corrChosenPrn)) { select.value = '0'; } // выбранный НКА сейчас не сопровождается
-  select.onchange = function () {
-    corrChosenPrn = +select.value;
-    corrSubscribe();
-    renderReceiverBar();
-    requestReceiverRender();
-  };
-  bar.appendChild(label);
-  bar.appendChild(select);
 }
 
 // Двоичный кадр (протокол v1, Binary frames): байт 0 задаёт тип
@@ -458,8 +464,10 @@ function renderCorrView(box) {
     content += svgText(plane.left + plane.width / 2, plane.top + plane.height / 2, 'история IP, QP ожидается',
                        'font-size="12" style="fill:var(--muted)" text-anchor="middle"');
   }
-  const subtitle = classNames[channel.cls] + ' · ' + (corrStateNames[snapshot.state] || 'состояние неизвестно')
-                 + ' · сопровождение ' + numberRu(snapshot.lock, 1) + ' с · C/N0 ' + numberRu(snapshot.cn0, 1)
+  // В сопровождении к названию состояния добавляется его длительность, иначе выводится одно название
+  const state = (snapshot.state === corrStateLock) ? ('сопровождение ' + numberRu(snapshot.lock, 1) + ' с')
+              : (corrStateNames[snapshot.state] || 'состояние неизвестно');
+  const subtitle = classNames[channel.cls] + ' · ' + state + ' · C/N0 ' + numberRu(snapshot.cn0, 1)
                  + ' дБ·Гц · DOP ' + signedRu(snapshot.fd, 1) + ' Гц · COFF ' + numberRu(snapshot.coff, 5) + ' мс';
   box.innerHTML = svgFrame(width, height, 'Корреляторы канала НКА ' + channel.prn, subtitle, content);
 }

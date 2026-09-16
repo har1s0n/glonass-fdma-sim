@@ -203,7 +203,7 @@ function parseChannelTable(text) {
 }
 
 // Строка состояния приёмника (формат sdr_rcv_rcv_stat, src/sdr_rcv.c): время приёмника, с;
-// источник; формат; гетеродины; квадратуры; Fs, МГц; каналы; поток, Мвыб/с; буфер, %
+// источник; формат; гетеродины; квадратуры; Fs, МГц; каналы; поток сырых данных, МБ/с; буфер, %
 function parseReceiverStatus(text) {
   const field = text.trim().split(/\s+/);
   return { time: parseFloat(field[0]), rate: parseFloat(field[8]) };
@@ -411,7 +411,7 @@ function renderReceiverTiles(rows) {
   tile(box, 'Ложных захватов', receiverSession ? numberRu(counts.spurious + counts.outside) : none);
   tile(box, 'Заполнение буфера, %',
        (receiverChannels && isFinite(receiverChannels.buffer)) ? numberRu(receiverChannels.buffer) : none);
-  tile(box, 'Поток, Мвыб/с',
+  tile(box, 'Поток, МБ/с',
        (receiverStatus && isFinite(receiverStatus.rate)) ? numberRu(receiverStatus.rate, 1) : none);
 }
 
