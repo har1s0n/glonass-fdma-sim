@@ -1,0 +1,36 @@
+# Стенд «модель сигнала L1OC → приёмник PocketSDR».
+#   без приёмника:  docker compose -f deploy/compose.yaml up -d
+#   с приёмником:   docker compose -f deploy/compose.yaml --profile sdr up -d
+# Порты публикуются только на петлевом адресе хоста; номер порта на хосте задаётся переменной
+# (в окружении или в deploy/.env), внутри контейнеров порты не меняются. При смене порта приёмника
+# его адрес один раз вводится на панели в поле «Адрес приёмника».
+name: glonass-l1oc-stand
+
+services:
+  glonass-signal-l1oc:
+    image: glonass-signal-l1oc:1.0
+    build:
+      context: ..
+      dockerfile: deploy/signal-service-l1oc/Dockerfile
+    ports:
+      - "127.0.0.1:${STAND_SIGNAL_PORT:-8080}:8080"
+    networks: [digital-twin]
+    restart: unless-stopped
+
+  pocket-web:
+    image: pocket-web:03787da5-u2
+    build:
+      context: ..
+      dockerfile: deploy/pocket-web/Dockerfile
+    profiles: [sdr]
+    depends_on:
+      glonass-signal-l1oc:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${STAND_RECEIVER_PORT:-8081}:8081"
+    networks: [digital-twin]
+    restart: unless-stopped
+
+networks:
+  digital-twin:
+    name: digital-twin

@@ -1,0 +1,17 @@
+# Контекст сборки образов стенда: корень репозитория (deploy/compose.yaml)
+.git
+.claude
+CLAUDE.md
+CMakeLists.txt.user*
+**/.DS_Store
+build
+build-*
+docs
+data
+tests
+
+# Продукты возможной локальной сборки PocketSDR не должны попасть в образ вместо собранных в нём
+third_party/PocketSDR/**/*.o
+third_party/PocketSDR/**/*.a
+third_party/PocketSDR/**/*.so
+third_party/PocketSDR/app/pocket_web/pocket_web
