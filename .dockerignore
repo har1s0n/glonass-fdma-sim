@@ -10,7 +10,6 @@ docs
 data
 tests
 
-# Продукты возможной локальной сборки PocketSDR не должны попасть в образ вместо собранных в нём
 third_party/PocketSDR/**/*.o
 third_party/PocketSDR/**/*.a
 third_party/PocketSDR/**/*.so
