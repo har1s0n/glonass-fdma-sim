@@ -28,6 +28,8 @@
 
 Версия сервиса 1.0, версия интерфейса `v1` (`apps/signal_service_l1oc/service_version.h`).
 
+![Рисунок 1. Стенд «модель сигнала → приёмник» в контейнерах](images/stend.drawio.png)
+
 ## 2. Состав
 
 | Путь | Содержание |
@@ -43,6 +45,7 @@
 | `deploy/signal-service-l1oc/` | Dockerfile образа сервиса `glonass-signal-l1oc:1.0` |
 | `deploy/pocket-web/` | Dockerfile образа приёмника `pocket-web:03787da5-u3`, настройки `pocket_web.ini`, проверка работоспособности `healthcheck.sh` |
 | `CMakeLists.txt` | сборка без Docker |
+| `images/` | рисунки README: PNG со встроенной схемой draw.io, открываются в draw.io для правки |
 
 ## 3. Требования
 
@@ -306,6 +309,8 @@ docker compose -f deploy/compose.yaml --profile sdr build --build-arg http_proxy
 соединение закрывается.
 
 ### Сеанс по TCP
+
+![Рисунок 2. Сеанс выдачи отсчётов по TCP](images/seans-tcp.drawio.png)
 
 1. `POST /v1/stream/tcp` с параметрами открывает на сервисе слушающий порт из диапазона
    `SIGNAL_TCP_PORTS` и сразу отвечает: `sessionId` (вида `s-0001`), `port`, `format`, `blockSamples`,
